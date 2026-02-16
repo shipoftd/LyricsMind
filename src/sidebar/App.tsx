@@ -42,7 +42,7 @@ interface LyricsData {
   plainLyrics: string | null;
 }
 
-type Tab = "context" | "lyrics";
+type Tab = "context" | "lyrics" | "ai";
 
 // ---- Fuzzy match annotation referent to a synced lyric line ----
 function normalize(s: string) {
@@ -114,6 +114,10 @@ export default function App() {
   const [currentTime, setCurrentTime] = useState(0);
   const [descriptionExpanded, setDescriptionExpanded] = useState(false);
   const [showAll, setShowAll] = useState(false);
+  const [aiInsights, setAiInsights] = useState<string | null>(null);
+  const [aiLoading, setAiLoading] = useState(false);
+  const [aiError, setAiError] = useState<string | null>(null);
+  const [aiFetched, setAiFetched] = useState(false);
 
   useEffect(() => {
     const handler = (event: MessageEvent) => {
@@ -130,6 +134,9 @@ export default function App() {
           setDescriptionExpanded(false);
           setActiveTab("context");
           setShowAll(false);
+          setAiInsights(null);
+          setAiError(null);
+          setAiFetched(false);
           break;
         case "GENIUS_DATA":
           setGenius(msg.payload);
@@ -144,12 +151,32 @@ export default function App() {
         case "LOADING":
           setLoading(msg.payload);
           break;
+        case "AI_INSIGHTS":
+          setAiInsights(msg.payload);
+          if (msg.error) setAiError(msg.error);
+          setAiFetched(true);
+          break;
+        case "AI_LOADING":
+          setAiLoading(msg.payload);
+          break;
       }
     };
 
     window.addEventListener("message", handler);
     return () => window.removeEventListener("message", handler);
   }, []);
+
+  // Request AI insights when the AI tab is activated for the first time
+  const handleAiTab = () => {
+    setActiveTab("ai");
+    if (!aiFetched && !aiLoading && song) {
+      // Send request to content script (parent) which relays to background
+      window.parent.postMessage({
+        type: "REQUEST_AI_INSIGHTS",
+        payload: { title: song.title, artist: song.artist },
+      }, "*");
+    }
+  };
 
   const toggleAnnotation = (id: number) => {
     setExpandedAnnotations((prev) => {
@@ -242,8 +269,8 @@ export default function App() {
         )}
       </header>
 
-      {/* Tab bar (only show if lyrics available for display) */}
-      {showLyricsTab && (
+      {/* Tab bar */}
+      {song && (
         <div className="flex border-b border-white/10 bg-[#111118] flex-shrink-0">
           <button
             onClick={() => setActiveTab("context")}
@@ -253,17 +280,29 @@ export default function App() {
                 : "text-white/40 hover:text-white/60"
             }`}
           >
-            Context & Annotations
+            Annotations
           </button>
+          {showLyricsTab && (
+            <button
+              onClick={() => setActiveTab("lyrics")}
+              className={`flex-1 py-2 text-xs font-medium transition-colors ${
+                activeTab === "lyrics"
+                  ? "text-purple-400 border-b-2 border-purple-400"
+                  : "text-white/40 hover:text-white/60"
+              }`}
+            >
+              Lyrics
+            </button>
+          )}
           <button
-            onClick={() => setActiveTab("lyrics")}
+            onClick={handleAiTab}
             className={`flex-1 py-2 text-xs font-medium transition-colors ${
-              activeTab === "lyrics"
+              activeTab === "ai"
                 ? "text-purple-400 border-b-2 border-purple-400"
                 : "text-white/40 hover:text-white/60"
             }`}
           >
-            Lyrics
+            AI Insights
           </button>
         </div>
       )}
@@ -322,6 +361,16 @@ export default function App() {
 
         {!loading && activeTab === "lyrics" && lyrics && (
           <LyricsView lyrics={lyrics} currentTime={currentTime} />
+        )}
+
+        {activeTab === "ai" && (
+          <AIInsightsView
+            aiInsights={aiInsights}
+            aiLoading={aiLoading}
+            aiError={aiError}
+            song={song}
+            onRetry={handleAiTab}
+          />
         )}
       </main>
 
@@ -562,6 +611,165 @@ function AnnotationCard({
       )}
     </button>
   );
+}
+
+// ---- AI Insights View ----
+
+function AIInsightsView({
+  aiInsights,
+  aiLoading,
+  aiError,
+  song,
+  onRetry,
+}: {
+  aiInsights: string | null;
+  aiLoading: boolean;
+  aiError: string | null;
+  song: SongInfo | null;
+  onRetry: () => void;
+}) {
+  if (aiLoading) {
+    return (
+      <div className="flex flex-col items-center justify-center h-full gap-3">
+        <div className="w-8 h-8 border-2 border-blue-500/30 border-t-blue-500 rounded-full animate-spin" />
+        <p className="text-xs text-white/40">Generating AI insights...</p>
+        <p className="text-[10px] text-white/20">This may take a few seconds</p>
+      </div>
+    );
+  }
+
+  if (aiError && !aiInsights) {
+    return (
+      <div className="p-6 text-center">
+        <div className="w-12 h-12 mx-auto mb-3 rounded-full bg-blue-500/10 flex items-center justify-center">
+          <svg className="w-6 h-6 text-blue-400" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+            <path strokeLinecap="round" strokeLinejoin="round" d="M9.663 17h4.673M12 3v1m6.364 1.636l-.707.707M21 12h-1M4 12H3m3.343-5.657l-.707-.707m2.828 9.9a5 5 0 117.072 0l-.548.547A3.374 3.374 0 0014 18.469V19a2 2 0 11-4 0v-.531c0-.895-.356-1.754-.988-2.386l-.548-.547z"/>
+          </svg>
+        </div>
+        <p className="text-sm text-white/60 mb-2">{aiError}</p>
+        {aiError.includes("API key") && (
+          <p className="text-xs text-white/30 mb-3">
+            Click the LyricsMind icon to configure your AI API key.
+          </p>
+        )}
+        <button
+          onClick={onRetry}
+          className="text-xs text-purple-400 hover:text-purple-300 px-3 py-1 rounded border border-purple-400/20 hover:border-purple-400/40 transition-colors"
+        >
+          Try again
+        </button>
+      </div>
+    );
+  }
+
+  if (!aiInsights) {
+    return (
+      <div className="flex flex-col items-center justify-center h-full gap-3 p-6">
+        <p className="text-sm text-white/40 text-center">
+          {song ? "Switch to this tab to generate AI insights" : "Play a song first"}
+        </p>
+      </div>
+    );
+  }
+
+  return (
+    <div className="p-4 annotation-enter">
+      <SimpleMarkdown text={aiInsights} />
+    </div>
+  );
+}
+
+// ---- Simple Markdown Renderer ----
+
+function SimpleMarkdown({ text }: { text: string }) {
+  const lines = text.split("\n");
+  const elements: React.ReactNode[] = [];
+  let i = 0;
+
+  while (i < lines.length) {
+    const line = lines[i];
+
+    // Headers
+    if (line.startsWith("### ")) {
+      elements.push(
+        <h3 key={i} className="text-sm font-bold text-white/90 mt-4 mb-1.5">
+          {formatInline(line.slice(4))}
+        </h3>
+      );
+    } else if (line.startsWith("## ")) {
+      elements.push(
+        <h2 key={i} className="text-sm font-bold text-purple-400 mt-4 mb-1.5 uppercase tracking-wider">
+          {formatInline(line.slice(3))}
+        </h2>
+      );
+    } else if (line.startsWith("# ")) {
+      elements.push(
+        <h1 key={i} className="text-base font-bold text-white mt-3 mb-2">
+          {formatInline(line.slice(2))}
+        </h1>
+      );
+    }
+    // Bullet lists
+    else if (line.match(/^[\-\*]\s/)) {
+      elements.push(
+        <div key={i} className="flex gap-2 text-xs text-white/60 leading-relaxed ml-1">
+          <span className="text-purple-400/60 mt-0.5">•</span>
+          <span>{formatInline(line.replace(/^[\-\*]\s/, ""))}</span>
+        </div>
+      );
+    }
+    // Empty lines
+    else if (line.trim() === "") {
+      elements.push(<div key={i} className="h-2" />);
+    }
+    // Regular paragraphs
+    else {
+      elements.push(
+        <p key={i} className="text-xs text-white/60 leading-relaxed">
+          {formatInline(line)}
+        </p>
+      );
+    }
+
+    i++;
+  }
+
+  return <div className="space-y-0.5">{elements}</div>;
+}
+
+function formatInline(text: string): React.ReactNode {
+  // Handle bold, italic, and inline code
+  const parts: React.ReactNode[] = [];
+  const regex = /(\*\*(.+?)\*\*|\*(.+?)\*|`(.+?)`)/g;
+  let lastIdx = 0;
+  let match;
+
+  while ((match = regex.exec(text)) !== null) {
+    if (match.index > lastIdx) {
+      parts.push(text.slice(lastIdx, match.index));
+    }
+    if (match[2]) {
+      // Bold
+      parts.push(<strong key={match.index} className="text-white/80 font-semibold">{match[2]}</strong>);
+    } else if (match[3]) {
+      // Italic
+      parts.push(<em key={match.index} className="text-white/70 italic">{match[3]}</em>);
+    } else if (match[4]) {
+      // Code
+      parts.push(
+        <code key={match.index} className="text-purple-300/80 bg-white/5 px-1 rounded text-[11px]">
+          {match[4]}
+        </code>
+      );
+    }
+    lastIdx = match.index + match[0].length;
+  }
+
+  if (lastIdx < text.length) {
+    parts.push(text.slice(lastIdx));
+  }
+
+  return parts.length > 0 ? <>{parts}</> : text;
 }
 
 // ---- Lyrics View (only shown when platform doesn't have lyrics) ----

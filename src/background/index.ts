@@ -52,6 +52,78 @@ async function getGeniusToken(): Promise<string | null> {
   return result.geniusToken ?? null;
 }
 
+async function getAIConfig(): Promise<{ apiKey: string; baseUrl: string; model: string } | null> {
+  const result = await chrome.storage.local.get(["aiApiKey", "aiBaseUrl", "aiModel"]);
+  if (!result.aiApiKey) return null;
+  return {
+    apiKey: result.aiApiKey,
+    baseUrl: result.aiBaseUrl || "https://generativelanguage.googleapis.com/v1beta/openai",
+    model: result.aiModel || "gemini-2.0-flash",
+  };
+}
+
+// ---- AI Insights ----
+
+const aiCache = new Map<string, string>();
+
+async function fetchAIInsights(title: string, artist: string): Promise<{ aiInsights?: string; error?: string }> {
+  const config = await getAIConfig();
+  if (!config) {
+    return { error: "No AI API key configured. Add one in the extension popup settings." };
+  }
+
+  const { cleaned: normTitle } = normalizeTitle(title);
+  const cacheKey = `ai|${normTitle}|${normalizeArtist(artist)}`;
+  if (aiCache.has(cacheKey)) {
+    return { aiInsights: aiCache.get(cacheKey)! };
+  }
+
+  const prompt = `Provide the best explanation of the lyrics of "${normTitle}" by ${artist}. ` +
+    `Break down the key themes, metaphors, and meaning behind the lyrics. ` +
+    `Also provide some cultural context, history, or trivia if available — for example, ` +
+    `what inspired the song, its impact, chart performance, notable covers, ` +
+    `or interesting production details. ` +
+    `Keep the response well-structured with clear sections. Use markdown formatting.`;
+
+  try {
+    const resp = await fetch(`${config.baseUrl}/chat/completions`, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        Authorization: `Bearer ${config.apiKey}`,
+      },
+      body: JSON.stringify({
+        model: config.model,
+        messages: [
+          {
+            role: "system",
+            content: "You are a music expert and cultural critic. Provide insightful, well-researched analysis of song lyrics. Be engaging and informative. Use markdown with ## headers for sections.",
+          },
+          { role: "user", content: prompt },
+        ],
+        max_tokens: 1500,
+        temperature: 0.7,
+      }),
+    });
+
+    if (!resp.ok) {
+      const errBody = await resp.text();
+      console.error("LyricsMind: AI API error", resp.status, errBody);
+      return { error: `AI API error (${resp.status}). Check your API key and settings.` };
+    }
+
+    const data = await resp.json();
+    const content = data.choices?.[0]?.message?.content ?? "";
+    if (!content) return { error: "AI returned an empty response." };
+
+    aiCache.set(cacheKey, content);
+    return { aiInsights: content };
+  } catch (err) {
+    console.error("LyricsMind: AI fetch error", err);
+    return { error: "Failed to connect to AI API. Check your base URL and network." };
+  }
+}
+
 // ---- Genius API ----
 
 interface GeniusSearchHit {
@@ -290,6 +362,12 @@ chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
     });
 
     return true; // async response
+  }
+
+  if (message.type === "FETCH_AI_INSIGHTS") {
+    const { title, artist } = message.payload;
+    fetchAIInsights(title, artist).then((result) => sendResponse(result));
+    return true;
   }
 
   if (message.type === "GET_GENIUS_TOKEN") {

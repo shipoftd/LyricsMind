@@ -239,6 +239,25 @@ chrome.runtime.onMessage.addListener((message) => {
   }
 });
 
+// Listen for requests from sidebar iframe
+window.addEventListener("message", async (event) => {
+  const msg = event.data;
+  if (msg?.type === "REQUEST_AI_INSIGHTS" && msg.payload) {
+    postToSidebar({ type: "AI_LOADING", payload: true });
+    try {
+      const response = await chrome.runtime.sendMessage({
+        type: "FETCH_AI_INSIGHTS",
+        payload: msg.payload,
+      });
+      postToSidebar({ type: "AI_INSIGHTS", payload: response.aiInsights ?? null, error: response.error });
+    } catch (err) {
+      postToSidebar({ type: "AI_INSIGHTS", payload: null, error: "Failed to fetch AI insights" });
+    } finally {
+      postToSidebar({ type: "AI_LOADING", payload: false });
+    }
+  }
+});
+
 if (document.readyState === "loading") {
   document.addEventListener("DOMContentLoaded", init);
 } else {
