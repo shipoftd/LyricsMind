@@ -202,10 +202,11 @@ chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
       return true;
     }
 
-    // Fetch in parallel: Genius always, LRCLIB only if platform doesn't have lyrics
+    // Always fetch LRCLIB — we need timestamps for annotation time-sync,
+    // even when the platform already shows lyrics.
     const promises: [Promise<unknown>, Promise<unknown>] = [
       fetchGeniusData(title, artist),
-      platformHasLyrics ? Promise.resolve(null) : fetchLRCLIB(title, artist),
+      fetchLRCLIB(title, artist),
     ];
 
     Promise.all(promises).then(([geniusResult, lyricsData]) => {

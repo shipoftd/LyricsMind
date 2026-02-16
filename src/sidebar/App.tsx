@@ -1,4 +1,4 @@
-import { useState, useEffect } from "react";
+import { useState, useEffect, useRef, useMemo } from "react";
 
 interface SongInfo {
   title: string;
@@ -11,6 +11,10 @@ interface GeniusAnnotation {
   id: number;
   referent: string;
   body: string;
+}
+
+interface TimedAnnotation extends GeniusAnnotation {
+  time: number; // ms timestamp mapped from synced lyrics
 }
 
 interface GeniusSongData {
@@ -40,6 +44,65 @@ interface LyricsData {
 
 type Tab = "context" | "lyrics";
 
+// ---- Fuzzy match annotation referent to a synced lyric line ----
+function normalize(s: string) {
+  return s.toLowerCase().replace(/[^a-z0-9 ]/g, "").replace(/\s+/g, " ").trim();
+}
+
+function matchAnnotationsToTimestamps(
+  annotations: GeniusAnnotation[],
+  syncedLyrics: LyricLine[] | null
+): TimedAnnotation[] {
+  if (!syncedLyrics || syncedLyrics.length === 0) {
+    // No timing data — spread evenly across a 4-min song as fallback
+    const totalMs = 240000;
+    const interval = totalMs / (annotations.length + 1);
+    return annotations.map((ann, i) => ({ ...ann, time: interval * (i + 1) }));
+  }
+
+  return annotations.map((ann) => {
+    const normRef = normalize(ann.referent);
+    if (!normRef) {
+      // No referent text — assign to middle of song
+      const mid = syncedLyrics[Math.floor(syncedLyrics.length / 2)];
+      return { ...ann, time: mid.time };
+    }
+
+    // Find the lyric line with the best overlap
+    let bestIdx = 0;
+    let bestScore = 0;
+
+    for (let i = 0; i < syncedLyrics.length; i++) {
+      const normLine = normalize(syncedLyrics[i].text);
+      // Check if the referent appears in this line or a window of consecutive lines
+      const window = [normLine];
+      if (i + 1 < syncedLyrics.length) window.push(normalize(syncedLyrics[i + 1].text));
+      if (i + 2 < syncedLyrics.length) window.push(normalize(syncedLyrics[i + 2].text));
+      const windowText = window.join(" ");
+
+      // Score: longest common substring ratio
+      if (windowText.includes(normRef)) {
+        // Exact match in window
+        if (normRef.length > bestScore) {
+          bestScore = normRef.length;
+          bestIdx = i;
+        }
+      } else {
+        // Partial: check word overlap
+        const refWords = normRef.split(" ");
+        const matchCount = refWords.filter((w) => windowText.includes(w)).length;
+        const score = matchCount / refWords.length;
+        if (score > bestScore) {
+          bestScore = score;
+          bestIdx = i;
+        }
+      }
+    }
+
+    return { ...ann, time: syncedLyrics[bestIdx].time };
+  });
+}
+
 export default function App() {
   const [song, setSong] = useState<SongInfo | null>(null);
   const [genius, setGenius] = useState<GeniusSongData | null>(null);
@@ -50,6 +113,7 @@ export default function App() {
   const [expandedAnnotations, setExpandedAnnotations] = useState<Set<number>>(new Set());
   const [currentTime, setCurrentTime] = useState(0);
   const [descriptionExpanded, setDescriptionExpanded] = useState(false);
+  const [showAll, setShowAll] = useState(false);
 
   useEffect(() => {
     const handler = (event: MessageEvent) => {
@@ -65,6 +129,7 @@ export default function App() {
           setExpandedAnnotations(new Set());
           setDescriptionExpanded(false);
           setActiveTab("context");
+          setShowAll(false);
           break;
         case "GENIUS_DATA":
           setGenius(msg.payload);
@@ -95,11 +160,47 @@ export default function App() {
     });
   };
 
+  // Build timed annotations whenever genius data or lyrics change
+  const timedAnnotations = useMemo(() => {
+    if (!genius?.annotations?.length) return [];
+    return matchAnnotationsToTimestamps(genius.annotations, lyrics?.syncedLyrics ?? null)
+      .sort((a, b) => a.time - b.time);
+  }, [genius, lyrics]);
+
   const showLyricsTab = song && !song.platformHasLyrics && lyrics;
   const albumArt = genius?.albumArt ?? genius?.songArt ?? song?.albumArt;
 
   return (
     <div className="h-screen bg-[#0a0a0f] text-white flex flex-col overflow-hidden font-sans">
+      {/* Animations CSS */}
+      <style>{`
+        @keyframes annotationIn {
+          0% { opacity: 0; transform: translateY(12px) scale(0.97); }
+          100% { opacity: 1; transform: translateY(0) scale(1); }
+        }
+        .annotation-enter {
+          animation: annotationIn 0.4s cubic-bezier(0.16, 1, 0.3, 1) forwards;
+        }
+        .annotation-collapsed {
+          max-height: 80px;
+          overflow: hidden;
+          mask-image: linear-gradient(to bottom, black 50%, transparent 100%);
+          -webkit-mask-image: linear-gradient(to bottom, black 50%, transparent 100%);
+        }
+        .annotation-active {
+          border-color: rgba(168, 85, 247, 0.3) !important;
+          box-shadow: 0 0 20px rgba(168, 85, 247, 0.08);
+        }
+        @keyframes pulseGlow {
+          0%, 100% { box-shadow: 0 0 12px rgba(168, 85, 247, 0.05); }
+          50% { box-shadow: 0 0 20px rgba(168, 85, 247, 0.15); }
+        }
+        .annotation-latest {
+          animation: annotationIn 0.4s cubic-bezier(0.16, 1, 0.3, 1) forwards,
+                     pulseGlow 2s ease-in-out 0.4s 2;
+        }
+      `}</style>
+
       {/* Header */}
       <header className="flex items-center gap-3 p-4 bg-[#111118] border-b border-white/10 flex-shrink-0">
         {albumArt ? (
@@ -141,7 +242,7 @@ export default function App() {
         )}
       </header>
 
-      {/* Tab bar (only show if lyrics available) */}
+      {/* Tab bar (only show if lyrics available for display) */}
       {showLyricsTab && (
         <div className="flex border-b border-white/10 bg-[#111118] flex-shrink-0">
           <button
@@ -208,6 +309,10 @@ export default function App() {
         {!loading && genius && activeTab === "context" && (
           <ContextView
             genius={genius}
+            timedAnnotations={timedAnnotations}
+            currentTime={currentTime}
+            showAll={showAll}
+            setShowAll={setShowAll}
             descriptionExpanded={descriptionExpanded}
             setDescriptionExpanded={setDescriptionExpanded}
             expandedAnnotations={expandedAnnotations}
@@ -232,12 +337,20 @@ export default function App() {
 
 function ContextView({
   genius,
+  timedAnnotations,
+  currentTime,
+  showAll,
+  setShowAll,
   descriptionExpanded,
   setDescriptionExpanded,
   expandedAnnotations,
   toggleAnnotation,
 }: {
   genius: GeniusSongData;
+  timedAnnotations: TimedAnnotation[];
+  currentTime: number;
+  showAll: boolean;
+  setShowAll: (v: boolean) => void;
   descriptionExpanded: boolean;
   setDescriptionExpanded: (v: boolean) => void;
   expandedAnnotations: Set<number>;
@@ -245,6 +358,29 @@ function ContextView({
 }) {
   const descriptionTruncated =
     genius.description.length > 200 && !descriptionExpanded;
+
+  // Determine which annotations are visible based on time
+  const visibleAnnotations = showAll
+    ? timedAnnotations
+    : timedAnnotations.filter((a) => a.time <= currentTime);
+
+  // The most recently revealed annotation
+  const latestId = visibleAnnotations.length > 0
+    ? visibleAnnotations[visibleAnnotations.length - 1].id
+    : null;
+
+  const hiddenCount = timedAnnotations.length - visibleAnnotations.length;
+
+  // Auto-scroll to latest annotation
+  const latestRef = useRef<HTMLDivElement>(null);
+  const prevLatestId = useRef<number | null>(null);
+
+  useEffect(() => {
+    if (latestId !== null && latestId !== prevLatestId.current && latestRef.current) {
+      latestRef.current.scrollIntoView({ behavior: "smooth", block: "center" });
+    }
+    prevLatestId.current = latestId;
+  }, [latestId]);
 
   return (
     <div className="p-4 space-y-4">
@@ -291,25 +427,62 @@ function ContextView({
       )}
 
       {/* Annotations */}
-      {genius.annotations.length > 0 && (
+      {timedAnnotations.length > 0 && (
         <section>
-          <h2 className="text-xs font-semibold text-purple-400 uppercase tracking-wider mb-2">
-            Annotations ({genius.annotations.length})
-          </h2>
-          <div className="space-y-2">
-            {genius.annotations.map((ann) => (
-              <AnnotationCard
-                key={ann.id}
-                annotation={ann}
-                expanded={expandedAnnotations.has(ann.id)}
-                onToggle={() => toggleAnnotation(ann.id)}
-              />
-            ))}
+          <div className="flex items-center justify-between mb-2">
+            <h2 className="text-xs font-semibold text-purple-400 uppercase tracking-wider">
+              Annotations
+              <span className="text-white/30 normal-case ml-1">
+                {visibleAnnotations.length}/{timedAnnotations.length}
+              </span>
+            </h2>
+            <button
+              onClick={() => setShowAll(!showAll)}
+              className={`text-[10px] px-2 py-0.5 rounded-full border transition-colors ${
+                showAll
+                  ? "text-purple-400 border-purple-400/30 bg-purple-400/10"
+                  : "text-white/40 border-white/10 hover:text-white/60 hover:border-white/20"
+              }`}
+            >
+              {showAll ? "Time-sync" : "Show all"}
+            </button>
           </div>
+
+          <div className="space-y-2">
+            {visibleAnnotations.map((ann, idx) => {
+              const isLatest = ann.id === latestId && !showAll;
+              const isOlder = !isLatest && !showAll && visibleAnnotations.length > 1 && idx < visibleAnnotations.length - 1;
+
+              return (
+                <div
+                  key={ann.id}
+                  ref={isLatest ? latestRef : undefined}
+                  className={isLatest && !showAll ? "annotation-latest" : "annotation-enter"}
+                >
+                  <AnnotationCard
+                    annotation={ann}
+                    expanded={expandedAnnotations.has(ann.id)}
+                    onToggle={() => toggleAnnotation(ann.id)}
+                    isLatest={isLatest}
+                    autoCollapse={isOlder && !expandedAnnotations.has(ann.id)}
+                  />
+                </div>
+              );
+            })}
+          </div>
+
+          {/* Upcoming hint */}
+          {!showAll && hiddenCount > 0 && (
+            <div className="mt-3 text-center">
+              <p className="text-[10px] text-white/20">
+                {hiddenCount} more annotation{hiddenCount > 1 ? "s" : ""} will appear as the song plays...
+              </p>
+            </div>
+          )}
         </section>
       )}
 
-      {genius.annotations.length === 0 && (!genius.description || genius.description === "?") && (
+      {timedAnnotations.length === 0 && (!genius.description || genius.description === "?") && (
         <div className="text-center py-8">
           <p className="text-sm text-white/40">
             No annotations available for this song yet.
@@ -343,29 +516,46 @@ function AnnotationCard({
   annotation,
   expanded,
   onToggle,
+  isLatest,
+  autoCollapse,
 }: {
-  annotation: GeniusAnnotation;
+  annotation: TimedAnnotation;
   expanded: boolean;
   onToggle: () => void;
+  isLatest: boolean;
+  autoCollapse: boolean;
 }) {
-  const bodyPreview = annotation.body.length > 120 && !expanded
+  const shouldCollapse = autoCollapse && !expanded;
+  const bodyPreview = annotation.body.length > 120 && !expanded && !shouldCollapse
     ? annotation.body.slice(0, 120) + "..."
     : annotation.body;
 
   return (
     <button
       onClick={onToggle}
-      className="w-full text-left bg-white/[0.03] hover:bg-white/[0.06] border border-white/[0.06] rounded-lg p-3 transition-colors"
+      className={`w-full text-left rounded-lg p-3 transition-all duration-300 border ${
+        isLatest
+          ? "bg-white/[0.05] border-purple-500/30 annotation-active"
+          : "bg-white/[0.03] hover:bg-white/[0.06] border-white/[0.06]"
+      }`}
     >
       {annotation.referent && (
-        <p className="text-xs text-yellow-400/80 italic mb-1.5 leading-snug border-l-2 border-yellow-400/30 pl-2">
-          "{annotation.referent}"
+        <p className={`text-xs italic mb-1.5 leading-snug border-l-2 pl-2 transition-colors duration-300 ${
+          isLatest
+            ? "text-yellow-400 border-yellow-400/50"
+            : "text-yellow-400/60 border-yellow-400/20"
+        }`}>
+          &ldquo;{annotation.referent}&rdquo;
         </p>
       )}
-      <p className="text-xs text-white/60 leading-relaxed whitespace-pre-line">
-        {bodyPreview}
-      </p>
-      {annotation.body.length > 120 && (
+      <div className={shouldCollapse ? "annotation-collapsed" : ""}>
+        <p className={`text-xs leading-relaxed whitespace-pre-line transition-colors duration-300 ${
+          isLatest ? "text-white/80" : "text-white/50"
+        }`}>
+          {shouldCollapse ? annotation.body : bodyPreview}
+        </p>
+      </div>
+      {(annotation.body.length > 120 || shouldCollapse) && (
         <span className="text-[10px] text-purple-400 mt-1 inline-block">
           {expanded ? "Show less" : "Show more"}
         </span>
@@ -378,7 +568,6 @@ function AnnotationCard({
 
 function LyricsView({ lyrics, currentTime }: { lyrics: LyricsData; currentTime: number }) {
   if (lyrics.syncedLyrics) {
-    // Find current line index
     let activeIdx = 0;
     for (let i = 0; i < lyrics.syncedLyrics.length; i++) {
       if (lyrics.syncedLyrics[i].time <= currentTime) activeIdx = i;

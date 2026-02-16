@@ -165,7 +165,9 @@ async function fetchSongData(song: ReturnType<typeof detectCurrentSong>) {
       });
     }
 
-    if (!song.platformHasLyrics && response?.lyricsData) {
+    // Always send lyrics data — needed for annotation time-sync even if
+    // the platform is already showing lyrics (display is controlled in sidebar)
+    if (response?.lyricsData) {
       postToSidebar({ type: "LYRICS_DATA", payload: response.lyricsData });
     }
   } catch (err) {
