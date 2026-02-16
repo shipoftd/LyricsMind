@@ -2,8 +2,12 @@
   "manifest_version": 3,
   "name": "LyricsMind",
   "version": "0.1.0",
-  "description": "Smart lyrics & annotations for YouTube Music and Spotify",
+  "description": "Smart annotations, context & lyrics for YouTube Music and Spotify",
   "permissions": ["storage", "activeTab"],
+  "host_permissions": [
+    "https://api.genius.com/*",
+    "https://lrclib.net/*"
+  ],
   "background": {
     "service_worker": "background.js",
     "type": "module"
@@ -21,6 +25,7 @@
     }
   ],
   "action": {
+    "default_popup": "popup.html",
     "default_icon": {
       "16": "icons/icon16.png",
       "48": "icons/icon48.png",
@@ -34,7 +39,7 @@
   },
   "web_accessible_resources": [
     {
-      "resources": ["sidebar.html", "assets/*"],
+      "resources": ["sidebar.html", "chunks/*", "assets/*"],
       "matches": ["https://music.youtube.com/*", "https://open.spotify.com/*"]
     }
   ],

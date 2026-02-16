@@ -4,6 +4,7 @@ import { resolve } from "path";
 
 export default defineConfig({
   plugins: [react()],
+  base: "",
   build: {
     outDir: "dist",
     emptyOutDir: true,
@@ -22,12 +23,6 @@ export default defineConfig({
         entryFileNames: "[name].js",
         chunkFileNames: "chunks/[name]-[hash].js",
         assetFileNames: "assets/[name]-[hash][extname]",
-        // Keep content scripts self-contained (no dynamic imports)
-        manualChunks(id) {
-          if (id.includes("node_modules/react")) {
-            return "chunks/react-vendor";
-          }
-        },
       },
     },
   },
