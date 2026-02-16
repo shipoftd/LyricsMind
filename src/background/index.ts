@@ -8,6 +8,45 @@ const GENIUS_SEARCH_URL = "https://api.genius.com/search";
 // Simple in-memory cache (persists while service worker is alive)
 const cache = new Map<string, { geniusData: unknown; lyricsData: unknown }>();
 
+// ---- Title normalization for live versions, covers, remixes, etc. ----
+
+// Patterns to strip from song titles (order matters — most specific first)
+const TITLE_STRIP_PATTERNS = [
+  // Parenthesized suffixes
+  /\s*\((?:live|en vivo|ao vivo|dal vivo)\s*(?:at|@|in|from|on)?\s*[^)]*\)/gi,
+  /\s*\((?:live|en vivo|ao vivo|dal vivo)\s*(?:version|ver\.?|recording)?\)/gi,
+  /\s*\((?:acoustic|unplugged|stripped)\s*(?:version|ver\.?|session|live)?\)/gi,
+  /\s*\((?:cover|tribute|originally by)\s*[^)]*\)/gi,
+  /\s*\((?:remix|re-?mix|mix)\s*[^)]*\)/gi,
+  /\s*\((?:demo|rough mix|alternate|alt\.?\s*(?:version|ver\.?|take)?)\)/gi,
+  /\s*\((?:remaster(?:ed)?|deluxe|bonus\s*track|extended|radio\s*edit)\s*[^)]*\)/gi,
+  /\s*\((?:feat\.?|ft\.?|featuring)\s*[^)]*\)/gi,
+  /\s*\((?:\d{4}\s*)?(?:version|ver\.?|edit|mix)\)/gi,
+  // Bracketed suffixes
+  /\s*\[(?:live|acoustic|unplugged|cover|remix|demo|remaster(?:ed)?|feat\.?|ft\.?)[^\]]*\]/gi,
+  // Dash/hyphen suffixes
+  /\s*-\s*(?:live|acoustic|unplugged|cover|remix|demo|remaster(?:ed)?)\s*(?:version|ver\.?|recording)?$/gi,
+  /\s*-\s*(?:live)\s+(?:at|@|in|from|on)\s+.*$/gi,
+];
+
+function normalizeTitle(title: string): { cleaned: string; wasModified: boolean } {
+  let cleaned = title;
+  for (const pattern of TITLE_STRIP_PATTERNS) {
+    cleaned = cleaned.replace(pattern, "");
+  }
+  cleaned = cleaned.trim().replace(/\s+/g, " ");
+  // Remove trailing dash or colon left over after stripping
+  cleaned = cleaned.replace(/\s*[-:]+\s*$/, "").trim();
+  return { cleaned, wasModified: cleaned !== title };
+}
+
+function normalizeArtist(artist: string): string {
+  // Strip "feat./ft." suffixes from artist to get the primary artist
+  return artist
+    .replace(/\s*(?:feat\.?|ft\.?|featuring|with|&|,)\s+.*/i, "")
+    .trim();
+}
+
 async function getGeniusToken(): Promise<string | null> {
   const result = await chrome.storage.local.get("geniusToken");
   return result.geniusToken ?? null;
@@ -111,7 +150,21 @@ async function fetchGeniusData(title: string, artist: string) {
   }
 
   try {
-    const searchResult = await searchGenius(title, artist, token);
+    // Try original title first
+    let searchResult = await searchGenius(title, artist, token);
+
+    // If no result, retry with normalized title (strips "Live at...", "Acoustic", etc.)
+    if (!searchResult) {
+      const { cleaned: cleanTitle, wasModified: titleChanged } = normalizeTitle(title);
+      const cleanArtist = normalizeArtist(artist);
+      const artistChanged = cleanArtist !== artist;
+
+      if (titleChanged || artistChanged) {
+        console.log(`LyricsMind: Retrying Genius search with normalized: "${cleanTitle}" - "${cleanArtist}"`);
+        searchResult = await searchGenius(cleanTitle, cleanArtist, token);
+      }
+    }
+
     if (!searchResult) return { error: "Song not found on Genius" };
 
     // Fetch song details and annotations in parallel
@@ -145,16 +198,34 @@ async function fetchGeniusData(title: string, artist: string) {
 
 // ---- LRCLIB (lyrics fallback) ----
 
+async function searchLRCLIB(title: string, artist: string) {
+  const query = encodeURIComponent(`${title} ${artist}`);
+  const resp = await fetch(`${LRCLIB_BASE}/search?q=${query}`);
+  if (!resp.ok) return null;
+  const results = await resp.json();
+  if (!results?.length) return null;
+  return results[0];
+}
+
 async function fetchLRCLIB(title: string, artist: string) {
   try {
-    const query = encodeURIComponent(`${title} ${artist}`);
-    const resp = await fetch(`${LRCLIB_BASE}/search?q=${query}`);
-    if (!resp.ok) return null;
+    // Try original title first
+    let best = await searchLRCLIB(title, artist);
 
-    const results = await resp.json();
-    if (!results?.length) return null;
+    // If no result, retry with normalized title
+    if (!best) {
+      const { cleaned: cleanTitle, wasModified: titleChanged } = normalizeTitle(title);
+      const cleanArtist = normalizeArtist(artist);
+      const artistChanged = cleanArtist !== artist;
 
-    const best = results[0];
+      if (titleChanged || artistChanged) {
+        console.log(`LyricsMind: Retrying LRCLIB search with normalized: "${cleanTitle}" - "${cleanArtist}"`);
+        best = await searchLRCLIB(cleanTitle, cleanArtist);
+      }
+    }
+
+    if (!best) return null;
+
     const lyricsData: { syncedLyrics: unknown[] | null; plainLyrics: string | null } = {
       syncedLyrics: null,
       plainLyrics: best.plainLyrics ?? null,
@@ -193,8 +264,11 @@ function parseLRC(lrcText: string) {
 
 chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
   if (message.type === "FETCH_SONG_DATA") {
-    const { title, artist, platformHasLyrics } = message.payload;
-    const cacheKey = `${title}|${artist}`;
+    const { title, artist } = message.payload;
+    // Cache key uses normalized title so live/acoustic versions share cache
+    const { cleaned: normTitle } = normalizeTitle(title);
+    const normArtist = normalizeArtist(artist);
+    const cacheKey = `${normTitle}|${normArtist}`;
 
     // Check cache
     if (cache.has(cacheKey)) {
