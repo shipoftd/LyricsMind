@@ -30,9 +30,7 @@ interface GeniusSearchHit {
 
 async function searchGenius(title: string, artist: string, token: string) {
   const query = encodeURIComponent(`${title} ${artist}`);
-  const resp = await fetch(`${GENIUS_SEARCH_URL}?q=${query}`, {
-    headers: { Authorization: `Bearer ${token}` },
-  });
+  const resp = await fetch(`${GENIUS_SEARCH_URL}?q=${query}&access_token=${token}`);
   if (!resp.ok) throw new Error(`Genius search failed: ${resp.status}`);
 
   const data = await resp.json();
@@ -73,9 +71,7 @@ interface GeniusSongDetail {
 }
 
 async function getGeniusSongDetail(songId: number, token: string): Promise<GeniusSongDetail | null> {
-  const resp = await fetch(`${GENIUS_API_BASE}/songs/${songId}?text_format=plain`, {
-    headers: { Authorization: `Bearer ${token}` },
-  });
+  const resp = await fetch(`${GENIUS_API_BASE}/songs/${songId}?text_format=plain&access_token=${token}`);
   if (!resp.ok) return null;
   const data = await resp.json();
   return data.response ?? null;
@@ -91,8 +87,7 @@ interface GeniusReferent {
 
 async function getGeniusAnnotations(songId: number, token: string) {
   const resp = await fetch(
-    `${GENIUS_API_BASE}/referents?song_id=${songId}&text_format=plain&per_page=20`,
-    { headers: { Authorization: `Bearer ${token}` } }
+    `${GENIUS_API_BASE}/referents?song_id=${songId}&text_format=plain&per_page=20&access_token=${token}`
   );
   if (!resp.ok) return [];
 
