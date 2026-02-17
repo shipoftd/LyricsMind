@@ -214,6 +214,20 @@ export default function App() {
           mask-image: linear-gradient(to bottom, black 50%, transparent 100%);
           -webkit-mask-image: linear-gradient(to bottom, black 50%, transparent 100%);
         }
+        .ai-section-collapsed {
+          max-height: 120px;
+          position: relative;
+          overflow: hidden;
+        }
+        .ai-section-collapsed::after {
+          content: '';
+          position: absolute;
+          bottom: 0;
+          left: 0;
+          right: 0;
+          height: 40px;
+          background: linear-gradient(to bottom, transparent, #111118);
+        }
         .annotation-active {
           border-color: rgba(168, 85, 247, 0.3) !important;
           box-shadow: 0 0 20px rgba(168, 85, 247, 0.08);
@@ -272,16 +286,6 @@ export default function App() {
       {/* Tab bar */}
       {song && (
         <div className="flex border-b border-white/10 bg-[#111118] flex-shrink-0">
-          <button
-            onClick={() => setActiveTab("context")}
-            className={`flex-1 py-2 text-xs font-medium transition-colors ${
-              activeTab === "context"
-                ? "text-purple-400 border-b-2 border-purple-400"
-                : "text-white/40 hover:text-white/60"
-            }`}
-          >
-            Annotations
-          </button>
           {showLyricsTab && (
             <button
               onClick={() => setActiveTab("lyrics")}
@@ -295,6 +299,16 @@ export default function App() {
             </button>
           )}
           <button
+            onClick={() => setActiveTab("context")}
+            className={`flex-1 py-2 text-xs font-medium transition-colors ${
+              activeTab === "context"
+                ? "text-purple-400 border-b-2 border-purple-400"
+                : "text-white/40 hover:text-white/60"
+            }`}
+          >
+            Annotations
+          </button>
+          <button
             onClick={handleAiTab}
             className={`flex-1 py-2 text-xs font-medium transition-colors ${
               activeTab === "ai"
@@ -302,7 +316,7 @@ export default function App() {
                 : "text-white/40 hover:text-white/60"
             }`}
           >
-            AI Insights
+            Interpretation
           </button>
         </div>
       )}
@@ -615,6 +629,40 @@ function AnnotationCard({
 
 // ---- AI Insights View ----
 
+function CollapsibleAISection({ title, content }: { title: string; content: string }) {
+  const [expanded, setExpanded] = useState(false);
+  const contentRef = useRef<HTMLDivElement>(null);
+  const [isTruncated, setIsTruncated] = useState(false);
+
+  useEffect(() => {
+    if (contentRef.current) {
+      setIsTruncated(contentRef.current.scrollHeight > 120);
+    }
+  }, [content]);
+
+  return (
+    <section className="bg-white/[0.03] border border-white/[0.06] rounded-lg p-3">
+      <h2 className="text-sm font-bold text-purple-400 mb-1.5 uppercase tracking-wider">
+        {title}
+      </h2>
+      <div
+        ref={contentRef}
+        className={`transition-all duration-500 ${!expanded && isTruncated ? "ai-section-collapsed" : "max-h-[1000px]"}`}
+      >
+        <SimpleMarkdown text={content} />
+      </div>
+      {isTruncated && (
+        <button
+          onClick={() => setExpanded(!expanded)}
+          className="text-xs text-purple-400 hover:text-purple-300 mt-2"
+        >
+          {expanded ? "Show Less" : "Show More"}
+        </button>
+      )}
+    </section>
+  );
+}
+
 function AIInsightsView({
   aiInsights,
   aiLoading,
@@ -628,11 +676,26 @@ function AIInsightsView({
   song: SongInfo | null;
   onRetry: () => void;
 }) {
+  const sections = useMemo(() => {
+    if (!aiInsights) return [];
+    const normalized = aiInsights.replace(/^##\s+/, "");
+    return normalized.split("\n## ").filter(s => s.trim()).map(s => {
+      const contentStartIndex = s.indexOf('\n');
+      if (contentStartIndex === -1) {
+        return { title: s.trim(), content: "" };
+      }
+      return {
+        title: s.slice(0, contentStartIndex).trim().replace(/^#+\s*/, ""),
+        content: s.slice(contentStartIndex + 1).trim(),
+      };
+    }).filter(s => s.content.length > 0);
+  }, [aiInsights]);
+
   if (aiLoading) {
     return (
       <div className="flex flex-col items-center justify-center h-full gap-3">
         <div className="w-8 h-8 border-2 border-blue-500/30 border-t-blue-500 rounded-full animate-spin" />
-        <p className="text-xs text-white/40">Generating AI insights...</p>
+        <p className="text-xs text-white/40">Generating interpretation...</p>
         <p className="text-[10px] text-white/20">This may take a few seconds</p>
       </div>
     );
@@ -649,7 +712,7 @@ function AIInsightsView({
         <p className="text-sm text-white/60 mb-2">{aiError}</p>
         {aiError.includes("API key") && (
           <p className="text-xs text-white/30 mb-3">
-            Click the LyricsMind icon to configure your AI API key.
+            Click the LyricsMind icon to configure your API key.
           </p>
         )}
         <button
@@ -666,15 +729,17 @@ function AIInsightsView({
     return (
       <div className="flex flex-col items-center justify-center h-full gap-3 p-6">
         <p className="text-sm text-white/40 text-center">
-          {song ? "Switch to this tab to generate AI insights" : "Play a song first"}
+          {song ? "Switch to this tab to generate interpretation" : "Play a song first"}
         </p>
       </div>
     );
   }
 
   return (
-    <div className="p-4 annotation-enter">
-      <SimpleMarkdown text={aiInsights} />
+    <div className="p-4 space-y-3 annotation-enter">
+      {sections.map(sec => (
+        <CollapsibleAISection key={sec.title} title={sec.title} content={sec.content} />
+      ))}
     </div>
   );
 }
@@ -682,65 +747,36 @@ function AIInsightsView({
 // ---- Simple Markdown Renderer ----
 
 function SimpleMarkdown({ text }: { text: string }) {
-  const lines = text.split("\n");
-  const elements: React.ReactNode[] = [];
-  let i = 0;
+  const paragraphs = text.split('\n').reduce((acc, line) => {
+    const trimmed = line.trim();
+    if (trimmed) {
+      if (acc.length > 0 && acc[acc.length - 1].endsWith('\n')) {
+        acc.push(trimmed);
+      } else if (acc.length > 0) {
+        acc[acc.length - 1] += ' ' + trimmed;
+      } else {
+        acc.push(trimmed);
+      }
+    } else if (acc.length > 0 && !acc[acc.length - 1].endsWith('\n')) {
+       acc[acc.length - 1] += '\n';
+    }
+    return acc;
+  }, [] as string[]);
 
-  while (i < lines.length) {
-    const line = lines[i];
-
-    // Headers
-    if (line.startsWith("### ")) {
-      elements.push(
-        <h3 key={i} className="text-sm font-bold text-white/90 mt-4 mb-1.5">
-          {formatInline(line.slice(4))}
-        </h3>
-      );
-    } else if (line.startsWith("## ")) {
-      elements.push(
-        <h2 key={i} className="text-sm font-bold text-purple-400 mt-4 mb-1.5 uppercase tracking-wider">
-          {formatInline(line.slice(3))}
-        </h2>
-      );
-    } else if (line.startsWith("# ")) {
-      elements.push(
-        <h1 key={i} className="text-base font-bold text-white mt-3 mb-2">
-          {formatInline(line.slice(2))}
-        </h1>
-      );
-    }
-    // Bullet lists
-    else if (line.match(/^[\-\*]\s/)) {
-      elements.push(
-        <div key={i} className="flex gap-2 text-xs text-white/60 leading-relaxed ml-1">
-          <span className="text-purple-400/60 mt-0.5">•</span>
-          <span>{formatInline(line.replace(/^[\-\*]\s/, ""))}</span>
-        </div>
-      );
-    }
-    // Empty lines
-    else if (line.trim() === "") {
-      elements.push(<div key={i} className="h-2" />);
-    }
-    // Regular paragraphs
-    else {
-      elements.push(
-        <p key={i} className="text-xs text-white/60 leading-relaxed">
-          {formatInline(line)}
+  return (
+    <div className="space-y-2">
+      {paragraphs.map((p, i) => (
+        <p key={i} className="text-xs text-white/70 leading-relaxed">
+          {formatInline(p)}
         </p>
-      );
-    }
-
-    i++;
-  }
-
-  return <div className="space-y-0.5">{elements}</div>;
+      ))}
+    </div>
+  );
 }
 
 function formatInline(text: string): React.ReactNode {
-  // Handle bold, italic, and inline code
   const parts: React.ReactNode[] = [];
-  const regex = /(\*\*(.+?)\*\*|\*(.+?)\*|`(.+?)`)/g;
+  const regex = /(\*\*(.+?)\*\*|\*(.+?)\*|`(.+?)`|\[(.+?)\]\((.+?)\))/g;
   let lastIdx = 0;
   let match;
 
@@ -749,17 +785,20 @@ function formatInline(text: string): React.ReactNode {
       parts.push(text.slice(lastIdx, match.index));
     }
     if (match[2]) {
-      // Bold
-      parts.push(<strong key={match.index} className="text-white/80 font-semibold">{match[2]}</strong>);
+      parts.push(<strong key={match.index} className="text-white/90 font-semibold">{match[2]}</strong>);
     } else if (match[3]) {
-      // Italic
-      parts.push(<em key={match.index} className="text-white/70 italic">{match[3]}</em>);
+      parts.push(<em key={match.index} className="text-white/80 italic">{match[3]}</em>);
     } else if (match[4]) {
-      // Code
       parts.push(
         <code key={match.index} className="text-purple-300/80 bg-white/5 px-1 rounded text-[11px]">
           {match[4]}
         </code>
+      );
+    } else if (match[5] && match[6]) {
+      parts.push(
+        <a key={match.index} href={match[6]} target="_blank" rel="noopener noreferrer" className="text-yellow-400/80 hover:text-yellow-400 underline decoration-yellow-400/30 underline-offset-2">
+          {match[5]}
+        </a>
       );
     }
     lastIdx = match.index + match[0].length;

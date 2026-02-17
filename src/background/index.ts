@@ -78,12 +78,17 @@ async function fetchAIInsights(title: string, artist: string): Promise<{ aiInsig
     return { aiInsights: aiCache.get(cacheKey)! };
   }
 
-  const prompt = `Provide the best explanation of the lyrics of "${normTitle}" by ${artist}. ` +
-    `Break down the key themes, metaphors, and meaning behind the lyrics. ` +
-    `Also provide some cultural context, history, or trivia if available — for example, ` +
-    `what inspired the song, its impact, chart performance, notable covers, ` +
-    `or interesting production details. ` +
-    `Keep the response well-structured with clear sections. Use markdown formatting.`;
+  const prompt = `"${normTitle}" by ${artist}.
+
+## Summary — one paragraph on the song's core message.
+## Lyric Breakdown — key themes, metaphors, wordplay. Quote lyrics in *italics*.
+
+Include ONLY if well-documented (omit otherwise):
+## Inspiration & Background
+## Cultural Impact
+## Trivia
+
+Cite sources inline: [name](url). Short paragraphs (2-4 sentences), no bullets.`;
 
   try {
     const resp = await fetch(`${config.baseUrl}/chat/completions`, {
@@ -97,7 +102,7 @@ async function fetchAIInsights(title: string, artist: string): Promise<{ aiInsig
         messages: [
           {
             role: "system",
-            content: "You are a music expert and cultural critic. Provide insightful, well-researched analysis of song lyrics. Be engaging and informative. Use markdown with ## headers for sections.",
+            content: "You are a music critic. Always respond in English. Write engaging, concise paragraph-based analysis using markdown ## headers. Cite sources as [name](url). Omit sections with no real information — brevity is fine. Do not fabricate facts.",
           },
           { role: "user", content: prompt },
         ],
