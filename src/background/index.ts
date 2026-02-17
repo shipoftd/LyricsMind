@@ -123,15 +123,16 @@ async function fetchAIInsights(title: string, artist: string): Promise<{ aiInsig
 
   const prompt = `"${normTitle}" by ${artist}.
 
-## Summary — one paragraph on the song's core message.
-## Lyric Breakdown — key themes, metaphors, wordplay. Quote lyrics in *italics*.
+## Summary — one short paragraph on the song's core message.
+
+## Lyric Breakdown — go through the song stanza by stanza (or verse/chorus). For each section, quote the key lyric in *italics* then explain its meaning in 1-2 sentences. Separate each stanza analysis with a blank line. CRITICAL: Only quote lyrics you are absolutely certain are correct. If you are unsure of the exact wording, describe the theme of that section instead of guessing the lyrics. Never fabricate or paraphrase lyrics as if they are direct quotes.
 
 Include ONLY if well-documented (omit otherwise):
 ## Inspiration & Background
 ## Cultural Impact
 ## Trivia
 
-Cite sources inline: [name](url). Short paragraphs (2-4 sentences), no bullets.`;
+Cite sources inline: [name](url). Keep paragraphs SHORT — 2-3 sentences max each, separated by blank lines. No bullets.`;
 
   try {
     const resp = await fetch(`${config.baseUrl}/chat/completions`, {
@@ -145,7 +146,7 @@ Cite sources inline: [name](url). Short paragraphs (2-4 sentences), no bullets.`
         messages: [
           {
             role: "system",
-            content: "You are a music critic. Always respond in English. Write engaging, concise paragraph-based analysis using markdown ## headers. Cite sources as [name](url). Omit sections with no real information — brevity is fine. Do not fabricate facts.",
+            content: "You are a music critic. Always respond in English. Write engaging analysis using markdown ## headers. Keep every paragraph to 2-3 sentences max — use blank lines between paragraphs liberally. Cite sources as [name](url). Omit sections with no real information. NEVER fabricate or hallucinate lyrics — only quote lyrics you know with certainty.",
           },
           { role: "user", content: prompt },
         ],
