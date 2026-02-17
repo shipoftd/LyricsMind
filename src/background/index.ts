@@ -53,6 +53,7 @@ function normalizeForMatch(s: string): string {
   return s.toLowerCase().replace(/[^a-z0-9 ]/g, "").replace(/\s+/g, " ").trim();
 }
 
+/** Returns 0-1 similarity score based on word overlap between two strings */
 function wordOverlapScore(a: string, b: string): number {
   const wordsA = new Set(normalizeForMatch(a).split(" ").filter(Boolean));
   const wordsB = new Set(normalizeForMatch(b).split(" ").filter(Boolean));
@@ -61,9 +62,11 @@ function wordOverlapScore(a: string, b: string): number {
   for (const w of wordsA) {
     if (wordsB.has(w)) matches++;
   }
+  // Score against the smaller set so short titles aren't penalized
   return matches / Math.min(wordsA.size, wordsB.size);
 }
 
+/** Check if the returned result plausibly matches the requested song */
 function verifySongMatch(
   requestedTitle: string,
   requestedArtist: string,
@@ -79,6 +82,8 @@ function verifySongMatch(
     normalizeArtist(requestedArtist),
     returnedArtist,
   );
+  // Need at least a reasonable title match AND some artist match
+  // Threshold: title >= 0.5 and artist >= 0.5, or title is near-perfect (>= 0.8)
   if (titleScore >= 0.8) return true;
   if (titleScore >= 0.5 && artistScore >= 0.5) return true;
   console.log(`LyricsMind: Rejecting mismatch — requested "${requestedTitle}" by "${requestedArtist}", got "${returnedTitle}" by "${returnedArtist}" (title=${titleScore.toFixed(2)}, artist=${artistScore.toFixed(2)})`);
@@ -164,6 +169,125 @@ Cite sources inline: [name](url). Short paragraphs (2-4 sentences), no bullets.`
   } catch (err) {
     console.error("LyricsMind: AI fetch error", err);
     return { error: "Failed to connect to AI API. Check your base URL and network." };
+  }
+}
+
+// ---- AI Fallback for missing annotations / lyrics ----
+
+const aiFallbackCache = new Map<string, { annotations?: { id: number; referent: string; body: string }[]; plainLyrics?: string }>();
+
+async function fetchAIFallback(
+  title: string,
+  artist: string,
+  needsAnnotations: boolean,
+  needsLyrics: boolean,
+  syncedLyrics?: { time: number; text: string }[] | null,
+): Promise<{ annotations?: { id: number; referent: string; body: string }[]; plainLyrics?: string; error?: string }> {
+  const config = await getAIConfig();
+  if (!config) {
+    return { error: "No AI API key configured." };
+  }
+
+  const { cleaned: normTitle } = normalizeTitle(title);
+  const cacheKey = `fallback|${normTitle}|${normalizeArtist(artist)}|${needsAnnotations}|${needsLyrics}`;
+  if (aiFallbackCache.has(cacheKey)) {
+    return aiFallbackCache.get(cacheKey)!;
+  }
+
+  const parts: string[] = [];
+
+  if (needsAnnotations) {
+    let lyricsContext = "";
+    if (syncedLyrics?.length) {
+      const lyricLines = syncedLyrics.map((l) => l.text).join("\n");
+      lyricsContext = `\n\nHere are the actual lyrics for reference — quote them exactly as referents:\n${lyricLines}`;
+    }
+
+    parts.push(`Generate 5-8 annotations for "${normTitle}" by ${artist}. Return ONLY a JSON array:
+[{"referent":"exact lyric quote","body":"2-4 sentence explanation"}]
+Each referent must be an exact lyric quote.${lyricsContext}`);
+  }
+
+  if (needsLyrics) {
+    parts.push(`Provide the complete lyrics for "${normTitle}" by ${artist}. Return ONLY the raw lyrics, no headers or commentary.`);
+  }
+
+  try {
+    const resp = await fetch(`${config.baseUrl}/chat/completions`, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        Authorization: `Bearer ${config.apiKey}`,
+      },
+      body: JSON.stringify({
+        model: config.model,
+        messages: [
+          {
+            role: "system",
+            content: "Music expert. Always respond in English. Follow formatting exactly. JSON requests: return valid JSON only, no fences or extra text.",
+          },
+          { role: "user", content: parts.join("\n\n---\n\n") },
+        ],
+        max_tokens: 2000,
+        temperature: 0.5,
+      }),
+    });
+
+    if (!resp.ok) {
+      console.error("LyricsMind: AI fallback error", resp.status);
+      return { error: `AI API error (${resp.status})` };
+    }
+
+    const data = await resp.json();
+    const content: string = data.choices?.[0]?.message?.content ?? "";
+    if (!content) return { error: "AI returned empty response" };
+
+    const result: { annotations?: { id: number; referent: string; body: string }[]; plainLyrics?: string } = {};
+
+    if (needsAnnotations && needsLyrics) {
+      // Both requested — split on the separator
+      const sepIdx = content.indexOf("---");
+      const annotationsPart = sepIdx >= 0 ? content.slice(0, sepIdx) : content;
+      const lyricsPart = sepIdx >= 0 ? content.slice(sepIdx + 3) : "";
+
+      result.annotations = parseAnnotationsJSON(annotationsPart);
+      if (lyricsPart.trim()) result.plainLyrics = lyricsPart.trim();
+    } else if (needsAnnotations) {
+      result.annotations = parseAnnotationsJSON(content);
+    } else if (needsLyrics) {
+      result.plainLyrics = content.trim();
+    }
+
+    aiFallbackCache.set(cacheKey, result);
+    return result;
+  } catch (err) {
+    console.error("LyricsMind: AI fallback fetch error", err);
+    return { error: "Failed to connect to AI API" };
+  }
+}
+
+function parseAnnotationsJSON(text: string): { id: number; referent: string; body: string }[] {
+  try {
+    // Strip markdown code fences if present
+    let cleaned = text.replace(/```(?:json)?\s*/g, "").replace(/```\s*/g, "").trim();
+
+    // Extract the JSON array from surrounding text — find first '[' to last ']'
+    const start = cleaned.indexOf("[");
+    const end = cleaned.lastIndexOf("]");
+    if (start >= 0 && end > start) {
+      cleaned = cleaned.slice(start, end + 1);
+    }
+
+    const arr = JSON.parse(cleaned);
+    if (!Array.isArray(arr)) return [];
+    return arr.map((item: { referent?: string; body?: string }, i: number) => ({
+      id: 900000 + i,
+      referent: item.referent ?? "",
+      body: item.body ?? "",
+    })).filter((a: { body: string }) => a.body.length > 0);
+  } catch (err) {
+    console.error("LyricsMind: Failed to parse AI annotations JSON", err, text.slice(0, 200));
+    return [];
   }
 }
 
@@ -429,6 +553,13 @@ chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
   if (message.type === "FETCH_AI_INSIGHTS") {
     const { title, artist } = message.payload;
     fetchAIInsights(title, artist).then((result) => sendResponse(result));
+    return true;
+  }
+
+  if (message.type === "FETCH_AI_FALLBACK") {
+    const { title, artist, needsAnnotations, needsLyrics, syncedLyrics } = message.payload;
+    fetchAIFallback(title, artist, needsAnnotations, needsLyrics, syncedLyrics)
+      .then((result) => sendResponse(result));
     return true;
   }
 

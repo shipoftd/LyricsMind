@@ -18,7 +18,7 @@ interface TimedAnnotation extends GeniusAnnotation {
 }
 
 interface GeniusSongData {
-  title: string;
+  title:string;
   artist: string;
   album?: string;
   releaseDate?: string;
@@ -118,6 +118,7 @@ export default function App() {
   const [aiLoading, setAiLoading] = useState(false);
   const [aiError, setAiError] = useState<string | null>(null);
   const [aiFetched, setAiFetched] = useState(false);
+  const fallbackRequested = useRef(false);
 
   useEffect(() => {
     const handler = (event: MessageEvent) => {
@@ -137,6 +138,7 @@ export default function App() {
           setAiInsights(null);
           setAiError(null);
           setAiFetched(false);
+          fallbackRequested.current = false;
           break;
         case "GENIUS_DATA":
           setGenius(msg.payload);
@@ -159,12 +161,55 @@ export default function App() {
         case "AI_LOADING":
           setAiLoading(msg.payload);
           break;
+        case "AI_FALLBACK":
+          if (msg.payload?.annotations?.length) {
+            setGenius((prev) => {
+              if (prev) {
+                return { ...prev, annotations: [...prev.annotations, ...msg.payload.annotations] };
+              }
+              return {
+                title: "",
+                artist: "",
+                description: "",
+                annotations: msg.payload.annotations,
+              };
+            });
+            setError(null);
+            // AI-generated annotations don't have real timing — show all at once
+            setShowAll(true);
+          }
+          if (msg.payload?.plainLyrics) {
+            setLyrics((prev) => prev ?? { syncedLyrics: null, plainLyrics: msg.payload.plainLyrics });
+          }
+          break;
       }
     };
 
     window.addEventListener("message", handler);
     return () => window.removeEventListener("message", handler);
   }, []);
+
+  // Auto-request AI fallback when annotations or lyrics are missing after loading
+  useEffect(() => {
+    if (loading || fallbackRequested.current || !song) return;
+
+    const needsAnnotations = !genius?.annotations?.length;
+    const needsLyrics = !lyrics?.plainLyrics && !lyrics?.syncedLyrics;
+
+    if (needsAnnotations || needsLyrics) {
+      fallbackRequested.current = true;
+      window.parent.postMessage({
+        type: "REQUEST_AI_FALLBACK",
+        payload: {
+          title: song.title,
+          artist: song.artist,
+          needsAnnotations,
+          needsLyrics,
+          syncedLyrics: lyrics?.syncedLyrics ?? null,
+        },
+      }, "*");
+    }
+  }, [loading, genius, lyrics, song]);
 
   // Request AI insights when the AI tab is activated for the first time
   const handleAiTab = () => {
@@ -215,7 +260,7 @@ export default function App() {
           -webkit-mask-image: linear-gradient(to bottom, black 50%, transparent 100%);
         }
         .ai-section-collapsed {
-          max-height: 120px;
+          max-height: 120px; /* A bit taller for paragraphs */
           position: relative;
           overflow: hidden;
         }
@@ -646,6 +691,7 @@ function CollapsibleAISection({ title, content }: { title: string; content: stri
   const [isTruncated, setIsTruncated] = useState(false);
 
   useEffect(() => {
+    // Check if the content is overflowing the collapsed height
     if (contentRef.current) {
       setIsTruncated(contentRef.current.scrollHeight > 120);
     }
@@ -689,6 +735,7 @@ function AIInsightsView({
 }) {
   const sections = useMemo(() => {
     if (!aiInsights) return [];
+    // Normalize: strip leading "## " from the very start if present
     const normalized = aiInsights.replace(/^##\s+/, "");
     return normalized.split("\n## ").filter(s => s.trim()).map(s => {
       const contentStartIndex = s.indexOf('\n');
@@ -758,6 +805,7 @@ function AIInsightsView({
 // ---- Simple Markdown Renderer ----
 
 function SimpleMarkdown({ text }: { text: string }) {
+  // Simple parser for paragraphs. Handles empty lines between paragraphs.
   const paragraphs = text.split('\n').reduce((acc, line) => {
     const trimmed = line.trim();
     if (trimmed) {
@@ -786,6 +834,7 @@ function SimpleMarkdown({ text }: { text: string }) {
 }
 
 function formatInline(text: string): React.ReactNode {
+  // Handle bold, italic, links, and inline code
   const parts: React.ReactNode[] = [];
   const regex = /(\*\*(.+?)\*\*|\*(.+?)\*|`(.+?)`|\[(.+?)\]\((.+?)\))/g;
   let lastIdx = 0;
@@ -795,17 +844,17 @@ function formatInline(text: string): React.ReactNode {
     if (match.index > lastIdx) {
       parts.push(text.slice(lastIdx, match.index));
     }
-    if (match[2]) {
+    if (match[2]) { // Bold
       parts.push(<strong key={match.index} className="text-white/90 font-semibold">{match[2]}</strong>);
-    } else if (match[3]) {
+    } else if (match[3]) { // Italic
       parts.push(<em key={match.index} className="text-white/80 italic">{match[3]}</em>);
-    } else if (match[4]) {
+    } else if (match[4]) { // Code
       parts.push(
         <code key={match.index} className="text-purple-300/80 bg-white/5 px-1 rounded text-[11px]">
           {match[4]}
         </code>
       );
-    } else if (match[5] && match[6]) {
+    } else if (match[5] && match[6]) { // Link
       parts.push(
         <a key={match.index} href={match[6]} target="_blank" rel="noopener noreferrer" className="text-yellow-400/80 hover:text-yellow-400 underline decoration-yellow-400/30 underline-offset-2">
           {match[5]}
@@ -821,6 +870,7 @@ function formatInline(text: string): React.ReactNode {
 
   return parts.length > 0 ? <>{parts}</> : text;
 }
+
 
 // ---- Lyrics View (only shown when platform doesn't have lyrics) ----
 

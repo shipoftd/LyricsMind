@@ -246,6 +246,21 @@ chrome.runtime.onMessage.addListener((message) => {
 // Listen for requests from sidebar iframe
 window.addEventListener("message", async (event) => {
   const msg = event.data;
+  if (msg?.type === "REQUEST_AI_FALLBACK" && msg.payload) {
+    postToSidebar({ type: "AI_FALLBACK_LOADING", payload: true });
+    try {
+      const response = await chrome.runtime.sendMessage({
+        type: "FETCH_AI_FALLBACK",
+        payload: msg.payload,
+      });
+      postToSidebar({ type: "AI_FALLBACK", payload: response });
+    } catch (err) {
+      postToSidebar({ type: "AI_FALLBACK", payload: { error: "Failed to fetch AI fallback" } });
+    } finally {
+      postToSidebar({ type: "AI_FALLBACK_LOADING", payload: false });
+    }
+  }
+
   if (msg?.type === "REQUEST_AI_INSIGHTS" && msg.payload) {
     postToSidebar({ type: "AI_LOADING", payload: true });
     try {
