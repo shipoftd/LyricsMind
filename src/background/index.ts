@@ -47,6 +47,44 @@ function normalizeArtist(artist: string): string {
     .trim();
 }
 
+// ---- Fuzzy verification to detect wrong-song results ----
+
+function normalizeForMatch(s: string): string {
+  return s.toLowerCase().replace(/[^a-z0-9 ]/g, "").replace(/\s+/g, " ").trim();
+}
+
+function wordOverlapScore(a: string, b: string): number {
+  const wordsA = new Set(normalizeForMatch(a).split(" ").filter(Boolean));
+  const wordsB = new Set(normalizeForMatch(b).split(" ").filter(Boolean));
+  if (wordsA.size === 0 || wordsB.size === 0) return 0;
+  let matches = 0;
+  for (const w of wordsA) {
+    if (wordsB.has(w)) matches++;
+  }
+  return matches / Math.min(wordsA.size, wordsB.size);
+}
+
+function verifySongMatch(
+  requestedTitle: string,
+  requestedArtist: string,
+  returnedTitle: string,
+  returnedArtist: string,
+): boolean {
+  const { cleaned: cleanRequested } = normalizeTitle(requestedTitle);
+  const titleScore = Math.max(
+    wordOverlapScore(requestedTitle, returnedTitle),
+    wordOverlapScore(cleanRequested, returnedTitle),
+  );
+  const artistScore = wordOverlapScore(
+    normalizeArtist(requestedArtist),
+    returnedArtist,
+  );
+  if (titleScore >= 0.8) return true;
+  if (titleScore >= 0.5 && artistScore >= 0.5) return true;
+  console.log(`LyricsMind: Rejecting mismatch — requested "${requestedTitle}" by "${requestedArtist}", got "${returnedTitle}" by "${returnedArtist}" (title=${titleScore.toFixed(2)}, artist=${artistScore.toFixed(2)})`);
+  return false;
+}
+
 async function getGeniusToken(): Promise<string | null> {
   const result = await chrome.storage.local.get("geniusToken");
   return result.geniusToken ?? null;
@@ -163,7 +201,14 @@ async function searchGenius(title: string, artist: string, token: string) {
            (hArtist.includes(normalArtist) && hTitle.includes(normalTitle.slice(0, 6)));
   }) ?? hits[0]; // fallback to first result
 
-  return match?.result ?? null;
+  if (!match) return null;
+
+  // Verify the result actually matches the requested song
+  if (!verifySongMatch(title, artist, match.result.title, match.result.primary_artist.name)) {
+    return null;
+  }
+
+  return match.result;
 }
 
 interface GeniusSongDetail {
@@ -227,19 +272,20 @@ async function fetchGeniusData(title: string, artist: string) {
   }
 
   try {
-    // Try original title first
-    let searchResult = await searchGenius(title, artist, token);
+    const { cleaned: cleanTitle, wasModified: titleChanged } = normalizeTitle(title);
+    const cleanArtist = normalizeArtist(artist);
 
-    // If no result, retry with normalized title (strips "Live at...", "Acoustic", etc.)
+    // For live/acoustic/remix versions, search the album version first
+    // so we get the richer annotations from the canonical release
+    let searchResult: Awaited<ReturnType<typeof searchGenius>> | null = null;
+    if (titleChanged) {
+      console.log(`LyricsMind: Searching Genius with normalized title: "${cleanTitle}" - "${cleanArtist}"`);
+      searchResult = await searchGenius(cleanTitle, cleanArtist, token);
+    }
+
+    // Fall back to original title if normalized search found nothing
     if (!searchResult) {
-      const { cleaned: cleanTitle, wasModified: titleChanged } = normalizeTitle(title);
-      const cleanArtist = normalizeArtist(artist);
-      const artistChanged = cleanArtist !== artist;
-
-      if (titleChanged || artistChanged) {
-        console.log(`LyricsMind: Retrying Genius search with normalized: "${cleanTitle}" - "${cleanArtist}"`);
-        searchResult = await searchGenius(cleanTitle, cleanArtist, token);
-      }
+      searchResult = await searchGenius(title, artist, token);
     }
 
     if (!searchResult) return { error: "Song not found on Genius" };
@@ -281,7 +327,18 @@ async function searchLRCLIB(title: string, artist: string) {
   if (!resp.ok) return null;
   const results = await resp.json();
   if (!results?.length) return null;
-  return results[0];
+
+  // Find the first result that actually matches the requested song
+  for (const result of results) {
+    const rTitle = result.trackName ?? result.name ?? "";
+    const rArtist = result.artistName ?? result.artist ?? "";
+    if (verifySongMatch(title, artist, rTitle, rArtist)) {
+      return result;
+    }
+  }
+
+  console.log(`LyricsMind: No LRCLIB result passed verification for "${title}" by "${artist}"`);
+  return null;
 }
 
 async function fetchLRCLIB(title: string, artist: string) {
