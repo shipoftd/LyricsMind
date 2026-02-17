@@ -216,9 +216,16 @@ export default function App() {
     setActiveTab("ai");
     if (!aiFetched && !aiLoading && song) {
       // Send request to content script (parent) which relays to background
+      // Pass lyrics so the AI can reference actual text instead of hallucinating
+      let lyricsText: string | null = null;
+      if (lyrics?.syncedLyrics) {
+        lyricsText = lyrics.syncedLyrics.map(l => l.text).join("\n");
+      } else if (lyrics?.plainLyrics) {
+        lyricsText = lyrics.plainLyrics;
+      }
       window.parent.postMessage({
         type: "REQUEST_AI_INSIGHTS",
-        payload: { title: song.title, artist: song.artist },
+        payload: { title: song.title, artist: song.artist, lyricsText },
       }, "*");
     }
   };

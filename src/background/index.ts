@@ -109,7 +109,7 @@ async function getAIConfig(): Promise<{ apiKey: string; baseUrl: string; model: 
 
 const aiCache = new Map<string, string>();
 
-async function fetchAIInsights(title: string, artist: string): Promise<{ aiInsights?: string; error?: string }> {
+async function fetchAIInsights(title: string, artist: string, lyricsText?: string | null): Promise<{ aiInsights?: string; error?: string }> {
   const config = await getAIConfig();
   if (!config) {
     return { error: "No AI API key configured. Add one in the extension popup settings." };
@@ -121,11 +121,15 @@ async function fetchAIInsights(title: string, artist: string): Promise<{ aiInsig
     return { aiInsights: aiCache.get(cacheKey)! };
   }
 
-  const prompt = `"${normTitle}" by ${artist}.
+  const lyricsSection = lyricsText
+    ? `\n\nHere are the actual lyrics — use ONLY these for quotes in the Lyric Breakdown:\n${lyricsText}`
+    : "";
+
+  const prompt = `"${normTitle}" by ${artist}.${lyricsSection}
 
 ## Summary — one short paragraph on the song's core message.
 
-## Lyric Breakdown — go through the song stanza by stanza (or verse/chorus). For each section, quote the key lyric in *italics* then explain its meaning in 1-2 sentences. Separate each stanza analysis with a blank line. CRITICAL: Only quote lyrics you are absolutely certain are correct. If you are unsure of the exact wording, describe the theme of that section instead of guessing the lyrics. Never fabricate or paraphrase lyrics as if they are direct quotes.
+## Lyric Breakdown — go through the song stanza by stanza (or verse/chorus). For each section, quote the key lyric in *italics* exactly as provided above, then explain its meaning in 1-2 sentences. Separate each stanza analysis with a blank line. Only quote lyrics from the provided text. If no lyrics were provided, describe themes without quoting.
 
 Include ONLY if well-documented (omit otherwise):
 ## Inspiration & Background
@@ -552,8 +556,8 @@ chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
   }
 
   if (message.type === "FETCH_AI_INSIGHTS") {
-    const { title, artist } = message.payload;
-    fetchAIInsights(title, artist).then((result) => sendResponse(result));
+    const { title, artist, lyricsText } = message.payload;
+    fetchAIInsights(title, artist, lyricsText).then((result) => sendResponse(result));
     return true;
   }
 
