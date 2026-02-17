@@ -109,7 +109,7 @@ export default function App() {
   const [lyrics, setLyrics] = useState<LyricsData | null>(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const [activeTab, setActiveTab] = useState<Tab>("context");
+  const [activeTab, setActiveTab] = useState<Tab>("lyrics");
   const [expandedAnnotations, setExpandedAnnotations] = useState<Set<number>>(new Set());
   const [currentTime, setCurrentTime] = useState(0);
   const [descriptionExpanded, setDescriptionExpanded] = useState(false);
@@ -132,7 +132,7 @@ export default function App() {
           setError(null);
           setExpandedAnnotations(new Set());
           setDescriptionExpanded(false);
-          setActiveTab("context");
+          setActiveTab("lyrics");
           setShowAll(false);
           setAiInsights(null);
           setAiError(null);
@@ -194,7 +194,7 @@ export default function App() {
       .sort((a, b) => a.time - b.time);
   }, [genius, lyrics]);
 
-  const showLyricsTab = song && !song.platformHasLyrics && lyrics;
+  const showLyricsTab = song && !song.platformHasLyrics;
   const albumArt = genius?.albumArt ?? genius?.songArt ?? song?.albumArt;
 
   return (
@@ -373,8 +373,19 @@ export default function App() {
           />
         )}
 
-        {!loading && activeTab === "lyrics" && lyrics && (
-          <LyricsView lyrics={lyrics} currentTime={currentTime} />
+        {activeTab === "lyrics" && (
+          loading ? (
+            <div className="flex flex-col items-center justify-center h-full gap-3">
+              <div className="w-8 h-8 border-2 border-purple-500/30 border-t-purple-500 rounded-full animate-spin" />
+              <p className="text-xs text-white/40">Fetching lyrics...</p>
+            </div>
+          ) : lyrics ? (
+            <LyricsView lyrics={lyrics} currentTime={currentTime} />
+          ) : (
+            <div className="p-6 text-center">
+              <p className="text-sm text-white/40">No lyrics found</p>
+            </div>
+          )
         )}
 
         {activeTab === "ai" && (
