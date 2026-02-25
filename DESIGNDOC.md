@@ -1,298 +1,370 @@
-# LyricsMind: Smart Lyrics & Annotations Extension
+# LyricsMind — Design Document
 
-*A Chrome Extension for YouTube Music & Spotify*
-
----
-
-## Project Description
-
-LyricsMind is a Chrome browser extension that enhances the music listening experience on YouTube Music and Spotify by providing synchronized lyrics alongside rich, contextual annotations similar to Genius.com. The extension displays in a non-intrusive sidebar, offering users deeper insight into the songs they're listening to through background information, trivia, artist commentary, and cultural references.
-
-The extension will automatically detect the currently playing song, fetch relevant lyrics and annotations from multiple sources, and present them in a beautiful, time-synchronized interface that enhances rather than disrupts the listening experience.
+*Chrome Extension for YouTube Music & Spotify*
 
 ---
 
-## Project Milestones
+## Overview
 
-### Milestone 1: Proof of Concept - Static Display
+LyricsMind is a Chrome Manifest V3 extension that injects a 380px sidebar into YouTube Music and Spotify. While a song plays, the sidebar automatically fetches and displays three layers of content:
 
-**Goal:** Establish core functionality with basic static lyrics and annotation display
+1. **Context tab** — Genius annotations, song metadata, and production credits
+2. **Lyrics tab** — Time-synced lyrics from LRCLIB, highlighted as the song plays
+3. **Interpretation tab** — AI-generated whole-song and stanza-by-stanza analysis grounded in the actual fetched lyrics
 
-**Key Deliverables:**
-
-- Chrome extension manifest and basic structure
-- Content script that detects currently playing song on YouTube Music and/or Spotify web player
-- Sidebar UI that displays when music is playing
-- Integration with at least one lyrics API (Genius or Musixmatch)
-- Display of complete static lyrics in the sidebar
-- Display of 2-3 static annotations per song (pulled from Genius API if available)
-
-**Success Criteria:** Extension successfully identifies songs and displays lyrics with basic annotations in a functional sidebar on both YouTube Music and Spotify.
+The extension works without any local server. All API calls are made from the background service worker to avoid CORS restrictions.
 
 ---
 
-### Milestone 2: Time-Synchronized Display
+## Architecture
 
-**Goal:** Implement real-time synchronization of lyrics and annotations with music playback
-
-**Key Deliverables:**
-
-- Integration with time-synced lyrics sources (LRC format from multiple providers)
-- Real-time playback position tracking from the music player
-- Auto-scrolling lyrics that highlight the current line being sung
-- Time-stamped annotation display that appears at relevant moments in the song
-- Smooth animation and transition effects for lyric/annotation changes
-
-**Success Criteria:** Lyrics highlight in real-time with music playback accuracy within 200ms, and annotations appear contextually at the right moments in the song.
-
----
-
-### Milestone 3: Interactive Features & Rich Content
-
-**Goal:** Add interactive elements and expand annotation sources for richer context
-
-**Key Deliverables:**
-
-- Clickable lyric lines that seek to that timestamp in the song
-- Expandable annotations with source attribution and 'Read More' links
-- Integration with multiple annotation sources (Genius, Wikipedia, artist interviews, music blogs)
-- Referenced sources as clickable links that open in new tabs
-- User preference settings (annotation density, auto-scroll speed, sidebar position)
-- Keyboard shortcuts for sidebar toggle and navigation
-
-**Success Criteria:** Users can interact with lyrics to control playback, explore annotations from multiple verified sources, and customize their experience through settings.
-
----
-
-### Milestone 4: Contextual Information & Trivia
-
-**Goal:** Provide comprehensive song context including production details, trivia, and cultural impact
-
-**Key Deliverables:**
-
-- Song metadata display (release date, album, producers, writers, genre)
-- Chart performance and popularity statistics
-- Cultural impact and historical context sections
-- Sample/interpolation detection with links to original songs
-- Artist relationship maps (collaborators, featured artists, influences)
-- Time-synced trivia cards that appear at specific moments (e.g., 'This sample is from...' when the sample plays)
-
-**Success Criteria:** Extension provides comprehensive song context that educates users about the music they're listening to, with time-synchronized trivia enhancing specific moments in the song.
-
----
-
-### Milestone 5: Advanced Features (Stretch Goals)
-
-**Goal:** Implement advanced features that set the extension apart from competitors
-
-**Potential Features:**
-
-- **AI-Powered Insights:** Use LLMs to generate lyric interpretations, identify literary devices, and explain metaphors in real-time
-- **Multi-Language Support:** Real-time translation of lyrics with cultural context for non-English songs
-- **Community Features:** Allow users to submit and vote on annotations, creating a crowd-sourced knowledge base
-- **Visual Enhancements:** Album art integration, color themes that match the album aesthetic, animated backgrounds
-- **Export & Sharing:** Allow users to export annotated lyrics as PDF or share specific annotations on social media
-- **Cross-Platform Sync:** Sync user preferences and saved annotations across devices
-- **Mini-Player Mode:** Detachable sidebar that can float over other applications for system-wide lyrics display
-
-**Success Criteria:** Implementation of at least 2-3 stretch features that significantly enhance user experience and differentiate the extension in the marketplace.
+```
+┌─────────────────────────────────────────────────────┐
+│              Music Platform (YouTube Music / Spotify) │
+│                                                       │
+│  ┌─────────────────────────┐                          │
+│  │  Content Script         │                          │
+│  │  (youtube-music.ts /    │                          │
+│  │   spotify.ts)           │                          │
+│  │                         │                          │
+│  │  • MutationObserver     │                          │
+│  │    detects song changes │                          │
+│  │  • Polls playback pos   │◄──── chrome.runtime ────►│
+│  │    every 1 second       │      sendMessage         │
+│  │  • Injects iframe       │                          │
+│  │  • Relays messages      │                          │
+│  │    between sidebar      │                          │
+│  │    and background       │                          │
+│  └────────────┬────────────┘                          │
+│               │ postMessage                           │
+│  ┌────────────▼────────────┐                          │
+│  │  Sidebar (iframe)       │                          │
+│  │  sidebar/App.tsx        │                          │
+│  │                         │                          │
+│  │  • React 19 + Tailwind  │                          │
+│  │  • 3-tab UI             │                          │
+│  │  • Time-sync highlight  │                          │
+│  │  • Collapsible sections │                          │
+│  └─────────────────────────┘                          │
+└─────────────────────────────────────────────────────┘
+                      │
+                      │ chrome.runtime.sendMessage
+                      ▼
+┌─────────────────────────────────────────────────────┐
+│  Background Service Worker (background/index.ts)     │
+│                                                       │
+│  • Genius API (search + song detail + annotations)   │
+│  • LRCLIB (time-synced + plain lyrics)               │
+│  • AI API (OpenAI-compatible: insights + fallback)   │
+│  • In-memory cache keyed by normalized title+artist  │
+└──────────────────────────────┬──────────────────────┘
+                               │ fetch()
+                    ┌──────────┼──────────┐
+                    ▼          ▼          ▼
+             Genius API    LRCLIB     AI API
+          api.genius.com  lrclib.net  (Gemini /
+                                       OpenAI)
+```
 
 ---
 
-## Implementation Details
+## Component Breakdown
 
-### Detecting Currently Playing Songs
+### 1. Content Scripts (`src/content/`)
 
-The extension needs to identify the currently playing song from the web player interface. This is accomplished through DOM scraping using content scripts that run on the music streaming sites.
+Two nearly identical scripts run on `music.youtube.com` and `open.spotify.com` respectively.
 
-#### YouTube Music Detection:
+**Responsibilities:**
+- Inject the sidebar `<div>` + `<iframe>` into the page DOM on load
+- Detect the currently playing song via DOM scraping
+- Observe DOM changes with `MutationObserver` to detect song changes
+- Poll playback position every **1 second** and relay it to the sidebar
+- Bridge messages between the sidebar iframe (`postMessage`) and the background service worker (`chrome.runtime.sendMessage`)
+- Handle keyboard shortcut toggle via `chrome.runtime.onMessage`
 
-- **DOM Element Selection:** Use CSS selectors to target the player bar elements. Song title is typically found at `.title.ytmusic-player-bar` and artist at `.byline.ytmusic-player-bar`
-- **Change Detection:** Implement MutationObserver to monitor the player bar for changes. When the title element's text content changes, extract the new song information
-- **Playback Position:** Access the time display elements or use the progress bar's aria attributes to determine current playback position for time-sync features
-- **Example Implementation:** Monitor `ytmusic-player-bar` container with MutationObserver, extract textContent from title/artist elements, poll time display every 100-200ms for sync accuracy
+**Song detection — YouTube Music:**
+- Title: `.title.ytmusic-player-bar`
+- Artist: `.byline.ytmusic-player-bar` — splits on `"•"` to extract just the artist from `"Artist • Album • Year"` format
+- Album art: `.thumbnail-image-wrapper img`
+- Observer target: `ytmusic-player-bar` element
+- Playback time: `.time-info` text content, split on `"/"`, with `#progress-bar[value]` as fallback
 
-#### Spotify Web Player Detection:
+**Song detection — Spotify:**
+- Title: `[data-testid="context-item-link"]` with fallback to `a[href*='/track/']`
+- Artist: `[data-testid="context-item-info-subtitles"] a` with fallback to `a[href*="/artist/"]`
+- Album art: first `<img>` inside `[data-testid="now-playing-widget"]`
+- Observer target: `[data-testid="now-playing-widget"]` with fallbacks to `.now-playing-bar` then `footer`
+- Playback time: `[data-testid="playback-position"]`
 
-- **DOM Element Selection:** Target Spotify's now-playing bar. Song information is typically in `[data-testid="now-playing-widget"]` with separate elements for track name and artist
-- **Change Detection:** Similar MutationObserver approach, watching the now-playing widget for updates
-- **Playback Position:** Spotify provides playback controls with time information. Monitor the progress bar element or time display for current position
-- **Alternative Approach:** For more reliable data, consider intercepting Spotify's internal API calls. The web player makes requests to Spotify's endpoints with playback state information that includes precise timing and track metadata
+**Debouncing:** MutationObserver callbacks are debounced at **300ms** to avoid redundant API calls during rapid DOM updates.
 
-#### Reference Implementation:
+**Platform lyrics detection:** Both scripts detect whether the platform is already showing its own lyrics panel (`[data-testid="lyrics-button"][aria-pressed="true"]` on Spotify; `ytmusic-description-shelf-renderer[has-lyrics]` on YouTube Music). This flag is passed to the sidebar to suppress the Lyrics tab when not needed.
 
-The [Web Scrobbler extension](https://github.com/web-scrobbler/web-scrobbler) successfully detects currently playing songs on 200+ music sites including YouTube Music and Spotify. Review their connector implementations for robust DOM scraping patterns
-
-#### Error Handling Strategies:
-
-- **Selector Validation:** Since streaming services frequently update their UI, implement a fallback mechanism that tries multiple known selector patterns
-- **Page URL Detection:** Verify the extension is on the correct page (music.youtube.com/watch or open.spotify.com) before attempting to extract song info
-- **Debouncing:** Implement debouncing (200-300ms delay) to prevent excessive API calls when users skip through songs quickly
-
----
-
-### Lyrics Sources & APIs
-
-Multiple lyrics sources should be integrated to maximize coverage and provide fallback options when primary sources fail.
-
-#### Official APIs:
-
-- **Genius API:** The official Genius API provides access to song lyrics and annotations. Registration required for API token at [docs.genius.com](https://docs.genius.com). The API provides song metadata, lyrics, and user-submitted annotations with source attribution. Free tier has rate limits (typically 1000 requests/day). **Best for:** Comprehensive annotations, verified artist commentary, cultural context
-
-- **Musixmatch API:** Commercial API with licensing from publishers. Requires API key from [developer.musixmatch.com](https://developer.musixmatch.com). Provides both static and time-synced lyrics (LRC format). Free tier very limited (500 requests/day). Paid tiers expensive but offer legal, licensed lyrics. **Best for:** Time-synced lyrics, legal compliance, multilingual support
-
-#### Reverse-Engineered Internal APIs:
-
-- **Spotify Internal Lyrics API:** Spotify's web/mobile apps use an internal API endpoint for lyrics. Can be accessed by mimicking the app's requests with proper authentication cookies (sp_dc). Projects like [spotify-lyrics-api](https://github.com/akashrchandran/spotify-lyrics-api) and [spotify-lyrics-scraper](https://pypi.org/project/spotify-lyrics-scraper/) demonstrate this approach. Provides time-synced lyrics powered by Musixmatch. **Risks:** Against Spotify TOS, may break with updates, requires user cookies
-
-- **YouTube Music Internal API:** Similar to Spotify, YouTube Music uses Google's InnerTube API (youtubei/v1 endpoints) for lyrics. The [ytmusicapi](https://github.com/sigma67/ytmusicapi) Python library demonstrates accessing this. Requires cookies from authenticated session. Provides lyrics data that YouTube Music displays natively. **Risks:** Unofficial, no guarantees of stability
-
-#### Community & Aggregator Services:
-
-- **LRCLIB API:** Free, open-source lyrics database with time-synced LRC files. No authentication required. Community-maintained with growing coverage. API at [lrclib.net](https://lrclib.net) provides simple REST endpoints. **Best for:** Free time-synced lyrics, no rate limits, open-source friendly
-
-- **Lyrics.ovh:** Aggregator API that pulls from multiple sources. Simple REST API at [lyricsovh.docs.apiary.io](https://lyricsovh.docs.apiary.io) with no authentication needed. Free but has rate limits. Good for basic lyrics when other sources fail
-
-#### Recommended Implementation Strategy:
-
-- **Primary Source:** Start with Genius API for annotations and rich content. It's official, stable, and provides the contextual information that makes the extension valuable
-- **Time-Sync Source:** Use LRCLIB or a combination of Spotify/YouTube Music internal APIs (with user consent) for time-synced lyrics. LRCLIB is safer from a TOS perspective
-- **Fallback Chain:** Implement a waterfall approach: Try Genius → Try LRCLIB → Try platform's internal API → Try Lyrics.ovh. This maximizes hit rate while respecting rate limits
-- **Caching:** Cache lyrics and annotations locally (IndexedDB) to reduce API calls, improve response time, and work offline. Clear cache periodically or when user preferences change
+**Sidebar injection:** The sidebar is a fixed-position `<div>` (380px wide, full viewport height, `z-index: 99999`) containing an `<iframe>` that loads `sidebar.html`. Using an iframe provides complete CSS isolation from the host page. Show/hide is implemented via CSS `transform: translateX(0/100%)` for smooth animation without layout reflow.
 
 ---
 
-### Time-Synchronization Implementation
+### 2. Background Service Worker (`src/background/index.ts`)
 
-Achieving accurate time-synchronization requires obtaining timestamped lyrics (LRC format) and continuously matching playback position with lyric timestamps.
+The service worker handles all network requests (to avoid CORS issues) and maintains an in-memory cache while it is alive.
 
-#### LRC Format Understanding:
+#### Title & Artist Normalization
 
-- **Format Structure:** LRC files contain timestamps in [mm:ss.xx] format followed by lyric text. Example: `[00:12.50]Is this the real life? [00:16.73]Is this just fantasy?`
-- **Parsing:** Parse LRC data into an array of objects with startTime (milliseconds) and text properties. Sort by startTime to ensure proper ordering
-- **Enhanced LRC:** Some sources provide word-level sync (Musixmatch Enhanced LRC) with multiple timestamps per line. This enables karaoke-style word highlighting
+Before any API call, song titles and artists are cleaned to improve match rates, especially for live versions, covers, and remasters:
 
-#### Playback Position Tracking:
+**Title strip patterns (applied in order):**
+- `(Live at X)`, `(Live)`, `(En Vivo)` — all parenthesized live variants
+- `(Acoustic)`, `(Unplugged)`, `(Stripped)`
+- `(Cover)`, `(Tribute)`, `(Originally Performed By X)`
+- `(Remix)`, `(Demo)`, `(Alternate)`
+- `(Remastered)`, `(Deluxe)`, `(Extended)`, `(Radio Edit)`
+- `(feat. X)`, `(ft. X)`
+- `(2015 Remaster)`, `(2015 Live Version)` — year-first parenthetical formats
+- `[Live]`, `[Acoustic]`, `[Remix]` — bracketed variants
+- `- Live 2019`, `- Remastered 2015` — dash-suffix variants with optional year
 
-- **Polling Approach:** Query the music player's current time every 100-200ms using setInterval. Extract time from DOM elements (progress bar aria-valuenow, time display text). Convert to milliseconds for comparison with LRC timestamps
-- **Event-Based Approach:** Listen for HTML5 audio/video 'timeupdate' events if the player exposes them. More efficient than polling but may not be available on all platforms. Combine with MutationObserver on time display elements as fallback
-- **Pause Detection:** Monitor for playback state changes (playing/paused) to stop sync updates when paused. Detect by watching play/pause button state or comparing consecutive time readings
+**Artist normalization:** Strips everything from `feat./ft./featuring/with/&/,` onwards to extract the primary artist.
 
-#### Synchronization Algorithm:
+#### Fuzzy Song Verification (`verifySongMatch`)
 
-- **Binary Search:** Use binary search on sorted LRC array to find the current lyric line based on playback time. O(log n) efficiency for large lyric sets
-- **Look-Ahead Buffer:** Pre-highlight the next line 200-300ms before it starts for smooth transitions. Helps compensate for rendering delays and improves perceived accuracy
-- **Offset Calibration:** Allow users to adjust sync offset (±2 seconds) to compensate for audio/display latency variations. Store per-platform or global offset preference
+After any API search returns a result, it is verified against the requested song to prevent wrong-song matches:
 
-#### UI Synchronization Effects:
+1. Both titles are normalized (punctuation stripped, lowercased, split into word sets)
+2. A word overlap score `(shared words / min set size)` is computed for title and artist
+3. Pass conditions:
+   - Title score ≥ 0.8 (near-perfect title match, artist not required), **or**
+   - Title score ≥ 0.5 **and** artist score ≥ 0.5
 
-- **Auto-Scroll:** Smoothly scroll the lyrics container to keep current line in view. Use CSS scroll-behavior: smooth or JavaScript scrollIntoView with smooth behavior. Keep current line at ~30% from top for better reading context
-- **Highlighting:** Apply distinct styling to current line (bold, color change, larger font). Dim previous/upcoming lines for visual hierarchy. Use CSS transitions for smooth highlight changes
-- **Annotation Timing:** Trigger annotation displays based on associated lyric line timing. Fade in annotations 500ms after their corresponding line starts. Auto-hide after 5-8 seconds or when next annotation appears
+Using `min(wordsA.size, wordsB.size)` as the denominator means short canonical titles ("Yesterday") score 1.0 against long live titles ("Yesterday (Live at Royal Albert Hall)") — the extra words in the live title don't penalise the score.
 
----
+#### Genius API Pipeline
 
-### User Interface Design & Implementation
+For each song:
 
-The extension's UI should be both visually appealing and functionally efficient, seamlessly integrating with the music streaming platforms while maintaining its own distinct identity.
+1. `normalizeTitle` to get `cleanTitle` and `wasModified` flag
+2. If title was modified (live/cover/etc.), **search Genius with the clean title first** to get the richer canonical annotations
+3. Fall back to the original title if clean search returns nothing
+4. Within `searchGenius`, preliminary string matching selects the best hit before `verifySongMatch` validates it
+5. Song details and annotations are fetched **in parallel** via `Promise.all`
 
-#### Sidebar Integration:
+**Data returned:**
+- Title, artist, album, release date
+- Plain-text song description
+- Up to 20 annotations (referent text + explanation body)
+- Genius page URL, album art, header image
+- Producers, writers, page view count
 
-- **Injection Method:** Use content script to inject a sidebar div into the page DOM. Position as fixed overlay with high z-index (9999+) to stay above page content. Implement as iframe for style isolation (prevents platform CSS conflicts)
-- **Positioning Options:** Right sidebar (default): 320-400px width, full viewport height. Left sidebar: Alternative for left-handed users or personal preference. Floating/detachable: Draggable window that can be positioned anywhere. User preference saved in chrome.storage.local
-- **Responsive Behavior:** Auto-collapse to icon-only mode on narrow screens (<1200px). Provide toggle button to show/hide sidebar (keyboard shortcut: Alt+L). Smooth slide-in/slide-out animations (300ms duration)
+#### LRCLIB Lyrics Pipeline
 
-#### Visual Design Framework:
+LRCLIB is the primary lyrics source. For live/cover/variant titles, the **clean title is searched first** (canonical version is more likely to have synced lyrics). Falls back to the original title if nothing found.
 
-- **Modern UI Library:** Consider using [React](https://react.dev) with [Tailwind CSS](https://tailwindcss.com) for rapid development and responsive design. Alternative: Vue.js with custom CSS for lighter bundle size. Use Shadow DOM for complete style encapsulation from host page
-- **Color Scheme:** Dark mode default (matches music platforms). Optional light mode toggle. Dynamic accent colors that adapt to album art (extract dominant colors). Semi-transparent background (backdrop-filter: blur) for modern glass morphism effect
-- **Typography:** Sans-serif fonts for readability (Inter, SF Pro, or Roboto). Lyrics: 16-18px, line-height 1.6 for comfortable reading. Annotations: 14-15px, slightly lighter color. Dynamic font sizing option for accessibility
+Three-pass strategy:
+1. Search with clean title (if title was modified)
+2. Fall back to original title
+3. If a result was found but has **no actual lyrics content** (`plainLyrics` and `syncedLyrics` both null — can happen when LRCLIB has a live track entry with no text), try the alternate query
 
-#### Component Structure:
+Synced lyrics (LRC format) are parsed into `{ time: number, text: string }[]` arrays. The LRC regex handles both 2-digit and 3-digit millisecond fields.
 
-- **Header Section:** Song title and artist (bold, 18-20px). Album art thumbnail (80x80px, rounded corners). Quick action buttons (collapse, settings, refresh)
-- **Lyrics Panel (Primary):** Scrollable container with smooth scrolling. Each lyric line as clickable element. Current line highlighted with color/weight change. Line numbers or timestamps optionally visible
-- **Annotations Pane:** Floating cards or inline expandable sections. Triggered by lyric line highlighting or manual clicks. Source attribution with icon/logo. Fade-in/fade-out animations for contextual display
-- **Trivia/Info Section (Collapsible):** Accordion-style expandable sections. Song credits, chart performance, cultural context. Related songs and samples as clickable links
+**Cache key:** `${normalizedTitle}|${normalizedArtist}` — live and studio versions of the same song share the same cache entry.
 
-#### Interactive Features:
+#### AI Fallback (`fetchAIFallback`)
 
-- **Lyric Click-to-Seek:** Clicking a lyric line sends timestamp to music player. Requires detecting player controls and simulating seek action. Fallback: Update progress bar position directly if exposed in DOM
-- **Copy Functionality:** Right-click context menu for copying lyrics. Copy single line, full lyrics, or lyrics with annotations. Formatted for sharing (include song/artist attribution)
-- **Search & Navigate:** In-sidebar search box to jump to specific lyrics. Keyboard navigation (arrow keys to move between lines). Jump-to-timestamp feature for quick navigation
+Triggered automatically when either Genius annotations or LRCLIB lyrics are missing after the initial fetch. The sidebar's `useEffect` detects the gap and sends `REQUEST_AI_FALLBACK` to the content script.
 
-#### Animation & Transitions:
+The AI is asked to produce:
+- **Annotations:** A JSON array of `{ referent, body }` objects tied to actual lyric lines
+- **Lyrics:** Raw plain lyrics text (no headers or commentary)
 
-- **Micro-Interactions:** Subtle hover effects on clickable elements (scale, color change). Ripple effect on lyric line clicks. Smooth color transitions for highlight changes
-- **Loading States:** Skeleton screens while fetching lyrics. Animated spinner for API requests. Error states with retry button and helpful messages
-- **Performance Optimization:** Virtual scrolling for very long lyrics (1000+ lines). Debounced scroll events to reduce repaints. CSS transforms for smooth animations (will-change property)
+If synced lyrics are available (from LRCLIB), they are included in the prompt as reference material so the AI can use exact lyric text as referents.
 
-#### Accessibility Considerations:
+#### AI Interpretation (`fetchAIInsights`)
 
-- **ARIA Labels:** Proper role and aria-label attributes for screen readers. Announce current lyric line changes. Keyboard-navigable with focus indicators
-- **Contrast Ratios:** WCAG AA compliance (4.5:1 for text). High contrast mode option for better readability. Adjustable font sizes (user preference)
-- **Reduced Motion:** Respect prefers-reduced-motion media query. Disable animations for users with motion sensitivity. Instant scrolling option instead of smooth scroll
+Triggered on-demand when the user opens the Interpretation tab.
 
----
+**Prompt structure:**
+- Song title and artist
+- If lyrics are available: wrapped in `=== LYRICS (quote ONLY from this text) ===` markers
+- If no lyrics: explicit `[No lyrics provided]` marker
 
-### Technical Architecture & File Structure
+**Generated sections (markdown `##` headers):**
+- **Summary** — one paragraph on the song's whole-song meaning, theme, and emotional arc
+- **Lyric Breakdown** — stanza by stanza; each stanza has lyric lines in `*italics*` followed immediately by 1-2 sentences of interpretation
+- **Inspiration & Background** — omitted if not well-documented
+- **Cultural Impact** — omitted if not well-documented
+- **Trivia** — omitted if not well-documented
 
-A well-organized codebase will facilitate easier maintenance, testing, and feature additions throughout development.
+**Anti-hallucination measures:**
+- System prompt explicitly forbids quoting from training knowledge; ONLY the provided `=== LYRICS ===` block may be used
+- If no lyrics block exists, the system prompt instructs zero lyric quotes
+- Cache key includes a `|true`/`|false` suffix for whether lyrics were present, preventing a lyric-less (potentially hallucinated) result from being served when lyrics later become available
 
-#### Chrome Extension Structure:
+**AI provider:** Defaults to Google Gemini 2.0 Flash via the OpenAI-compatible endpoint (`generativelanguage.googleapis.com/v1beta/openai`). Configurable to any OpenAI-compatible API via popup settings (base URL + model + API key).
 
-- **manifest.json:** Manifest V3 format (required for new extensions - see [Chrome Extension docs](https://developer.chrome.com/docs/extensions/mv3/intro/)). Declare content scripts for music.youtube.com and open.spotify.com. Specify permissions: storage, activeTab. Optional: declarativeNetRequest for API optimization
-- **Background Service Worker:** Handles API requests to avoid CORS issues. Manages chrome.storage operations. Coordinates between content scripts and popup. Implements caching layer for lyrics/annotations
-- **Content Scripts:** Platform-specific scripts (youtube-music.js, spotify.js). DOM manipulation for song detection and sidebar injection. Message passing with background worker. Isolated execution context for security
-- **Popup Interface:** Settings panel accessed via extension icon. User preferences configuration. Quick toggle for enable/disable. About/Help documentation links
+#### Caching
 
-#### Recommended Folder Structure:
+Two separate in-memory `Map` caches:
+- **`cache`** — Genius + LRCLIB data, keyed by `${normalizedTitle}|${normalizedArtist}`
+- **`aiCache`** — AI interpretation text, keyed by `ai|${normalizedTitle}|${normalizedArtist}|${hasLyrics}`
+- **`aiFallbackCache`** — AI fallback annotations/lyrics, keyed by title/artist/needs flags
 
-- `/src`
-  - `/background` - Service worker code
-  - `/content` - Platform-specific content scripts
-  - `/sidebar` - React/Vue sidebar application
-  - `/popup` - Settings UI
-  - `/utils` - Shared utilities (API clients, parsers, helpers)
-  - `/styles` - Global CSS/Tailwind configuration
-
-#### Development Tooling:
-
-- **Build System:** Webpack or Vite for bundling React/Vue code. Separate build outputs for content scripts, background, and sidebar. Hot reload during development for faster iteration
-- **TypeScript:** Strongly recommended for type safety and better IDE support. Reduces runtime errors in production. Excellent for API response typing
-- **Testing:** Jest for unit tests on utility functions. Playwright or Puppeteer for E2E testing on actual music platforms. Mock API responses for reliable testing
-- **Version Control:** Git with semantic versioning. Separate branches for features and platforms. CI/CD pipeline for automated testing and builds
-
----
-
-### Data Flow & State Management
-
-Understanding the data flow from song detection through API fetching to UI display is crucial for maintaining a responsive, bug-free extension.
-
-#### Typical Request Flow:
-
-1. **Song Detection:** Content script observes DOM changes, extracts song title and artist
-2. **Cache Check:** Query local IndexedDB cache for existing lyrics/annotations using song+artist as key
-3. **API Request (if cache miss):** Send message to background worker with song metadata
-4. **Background Processing:** Background worker queries Genius API for annotations, LRCLIB for time-synced lyrics, additional sources as fallback
-5. **Data Aggregation:** Combine responses, format into unified data structure, store in cache
-6. **UI Update:** Send processed data back to content script via message passing
-7. **Sidebar Render:** Content script injects/updates sidebar UI with new lyrics and annotations
-
-#### State Management Approach:
-
-- **Simple React State:** For POC and early milestones, useState and useContext sufficient. currentSong, lyrics, annotations, and playbackPosition as main state variables
-- **Redux/Zustand (Advanced):** For complex features (Milestone 4+) where state becomes harder to manage. Centralized store for user preferences, cache, and UI state. Time-travel debugging capabilities
-- **Reactive Updates:** Use WebSocket or long-polling for live annotation updates (stretch goal). Message passing between background and content scripts for real-time sync. Event-driven architecture for playback state changes
-
-**Performance Optimization:** Debounce rapid song changes to prevent API spam. Prefetch lyrics for next song in queue when possible. Lazy load annotations (load on-demand rather than all upfront). Virtual DOM optimization for large lyric sets
+All caches are in-memory only. They persist while the service worker is alive (typically minutes to hours) and are cleared when Chrome recycles the worker.
 
 ---
 
-## Success Metrics & Next Steps
+### 3. Sidebar App (`src/sidebar/App.tsx`)
 
-**Key Performance Indicators:** Track lyric synchronization accuracy (<200ms deviation), annotation fetch success rate (>90%), sidebar load time (<500ms), API rate limit compliance, user satisfaction through feedback and ratings
+A React 19 app served inside the iframe. Receives all data via `window.addEventListener("message")` from the parent content script.
 
-**Development Timeline Estimate:** Milestone 1 (POC): 2-3 weeks. Milestone 2 (Time-sync): 2-3 weeks. Milestone 3 (Interactive): 2-3 weeks. Milestone 4 (Trivia): 2-3 weeks. Milestone 5 (Stretch): 3-4 weeks. Total estimated: 11-16 weeks for full implementation
+#### Message Protocol
 
-**Recommended First Steps:** Begin with Milestone 1 focusing on YouTube Music support only (simpler DOM structure than Spotify). Build basic sidebar UI with static lyrics from Genius API. Validate the concept works before investing in time-sync complexity. Gather user feedback early to refine UI/UX before adding advanced features. For inspiration and technical reference, review the [Better Lyrics extension](https://github.com/better-lyrics/better-lyrics) which implements similar time-synced functionality for YouTube Music.
+| Message type | Direction | Payload |
+|---|---|---|
+| `SONG_UPDATE` | content → sidebar | `{ title, artist, albumArt, platformHasLyrics }` |
+| `GENIUS_DATA` | content → sidebar | Genius song data object or null + error |
+| `LYRICS_DATA` | content → sidebar | `{ syncedLyrics, plainLyrics }` |
+| `PLAYBACK_UPDATE` | content → sidebar | `{ currentTime, isPlaying }` |
+| `LOADING` | content → sidebar | boolean |
+| `AI_FALLBACK` | content → sidebar | `{ annotations?, plainLyrics? }` |
+| `AI_INSIGHTS` | content → sidebar | interpretation markdown string |
+| `AI_LOADING` | content → sidebar | boolean |
+| `REQUEST_AI_FALLBACK` | sidebar → content | `{ title, artist, needsAnnotations, needsLyrics, syncedLyrics }` |
+| `REQUEST_AI_INSIGHTS` | sidebar → content | `{ title, artist, lyricsText }` |
+
+#### Tab: Context
+
+Shows Genius data: song description (collapsible after 3 lines), producer/writer/release date badges, page view count, and a link to the full Genius page.
+
+Below the metadata, annotation cards are listed in timestamp order. Each card shows the **referent** (quoted lyric fragment) and the **annotation body** (expandable). Annotations are time-synced to the current playback position using `matchAnnotationsToTimestamps`.
+
+**Annotation time-sync:** Genius annotations reference lyric text but have no timestamps. These are mapped to timestamps by fuzzy-matching each annotation's referent string against the LRCLIB synced lyrics:
+1. Normalize both strings (lowercase, strip punctuation)
+2. Check exact substring match within a 3-line sliding window
+3. Fall back to word overlap scoring
+4. If no synced lyrics exist, spread annotations evenly across a 4-minute notional song duration
+
+#### Tab: Lyrics
+
+If synced lyrics are available, lines are rendered with the current active line highlighted and the list auto-scrolls using `scrollIntoView({ behavior: "smooth", block: "center" })`. The active index is computed by scanning backwards through the sorted time array for the last line whose timestamp ≤ current playback time.
+
+If only plain lyrics are available (no timestamps), they are rendered in a `<pre>` block.
+
+If neither is available, an AI fallback has already been triggered automatically.
+
+#### Tab: Interpretation
+
+Parses the AI markdown response by splitting on `\n## ` to extract named sections. Each section is rendered as a `CollapsibleAISection` card (expandable past 120px with a Show More / Show Less button). The content div always has `overflow: hidden` to prevent content from overflowing the button.
+
+The **Lyric Breakdown** section uses a specialized `LyricBreakdownContent` renderer instead of the generic `SimpleMarkdown`:
+- The content is split into stanza blocks on blank lines
+- Within each block, leading lines matching `/^\*([^*].*)\*$/` (italic markers) are extracted as the lyric quote and rendered in italic (`text-white/85 italic`)
+- Remaining lines are the interpretation, rendered in regular weight (`text-white/65`)
+- A `mb-1.5` gap separates quote from interpretation visually
+
+**Late-lyrics re-fetch:** If the user opens the Interpretation tab before the AI lyrics fallback completes, the request fires without lyrics. The `aiFetchedWithoutLyrics` ref tracks this. When lyrics subsequently arrive (via `AI_FALLBACK`), a `useEffect` watching the `lyrics` state automatically resets the insights state and re-fires the interpretation request with the real lyrics — but only if the user is still on the Interpretation tab.
+
+#### Inline Markdown Renderer (`SimpleMarkdown` + `formatInline`)
+
+A lightweight parser for the AI-generated text. `SimpleMarkdown` groups non-blank lines into paragraphs separated by blank lines. `formatInline` applies inline formatting via regex:
+- `**text**` → `<strong>`
+- `*text*` → `<em>`
+- `` `text` `` → `<code>`
+- `[text](url)` → `<a target="_blank">`
+
+---
+
+### 4. Popup (`src/popup/App.tsx`)
+
+A 320px settings panel accessed via the extension toolbar icon. Stores all settings in `chrome.storage.local`:
+
+| Setting | Key | Purpose |
+|---|---|---|
+| Sidebar enabled | `enabled` | Toggle sidebar injection on/off |
+| Genius token | `geniusToken` | Client Access Token for Genius API |
+| AI API key | `aiApiKey` | Key for Gemini or OpenAI-compatible provider |
+| AI base URL | `aiBaseUrl` | Defaults to Gemini's OpenAI-compatible endpoint |
+| AI model | `aiModel` | Defaults to `gemini-2.0-flash` |
+
+---
+
+## Data Flow: Song Change to Fully Rendered Sidebar
+
+```
+1. MutationObserver fires on player bar DOM change
+        │
+        ▼ (debounced 300ms)
+2. detectCurrentSong() → { title, artist, albumArt, platformHasLyrics }
+        │
+        ├─► postMessage SONG_UPDATE → sidebar resets state, shows loading
+        │
+        ▼
+3. chrome.runtime.sendMessage FETCH_SONG_DATA
+        │
+        ▼
+4. Background: normalizeTitle(title) + normalizeArtist(artist)
+   Check cache → if hit, return immediately
+        │
+        ├─► fetchGeniusData (clean title first, original as fallback)
+        │     └─► searchGenius → verifySongMatch → song detail + annotations (parallel)
+        │
+        └─► fetchLRCLIB (clean title first, original as fallback)
+              └─► searchLRCLIB → verifySongMatch → parseLRC
+        │
+        ▼ (both resolve via Promise.all)
+5. Result cached and returned to content script
+        │
+        ├─► postMessage GENIUS_DATA → sidebar renders Context tab
+        └─► postMessage LYRICS_DATA → sidebar renders Lyrics tab
+
+6. Sidebar useEffect: if annotations missing OR lyrics missing
+        └─► postMessage REQUEST_AI_FALLBACK → content → background
+              └─► fetchAIFallback → AI API → annotations / plain lyrics
+                    └─► postMessage AI_FALLBACK → sidebar fills gaps
+
+7. User clicks Interpretation tab
+        └─► postMessage REQUEST_AI_INSIGHTS (with lyricsText if available)
+              └─► content → background → fetchAIInsights → AI API
+                    └─► postMessage AI_INSIGHTS → sidebar renders breakdown
+```
+
+---
+
+## Build System
+
+**Vite** with a multi-entry Rollup config produces five separate bundles in `dist/`:
+
+| Entry | Output |
+|---|---|
+| `popup.html` | `dist/popup.html` + `dist/popup.js` |
+| `sidebar.html` | `dist/sidebar.html` + `dist/sidebar.js` |
+| `src/background/index.ts` | `dist/background.js` |
+| `src/content/youtube-music.ts` | `dist/content/youtube-music.js` |
+| `src/content/spotify.ts` | `dist/content/spotify.js` |
+
+Shared React/React-DOM chunks are output to `dist/chunks/`. CSS is extracted to `dist/assets/`.
+
+Content scripts must be plain JS files (not ES modules) — Vite's Rollup output is configured with `entryFileNames: "[name].js"` and no module format override, which produces IIFE-compatible output suitable for `run_at: document_idle` injection.
+
+---
+
+## Key Design Decisions
+
+**iframe sidebar instead of injected DOM**
+Injecting React directly into the page DOM risks CSS conflicts with the host site's stylesheets. An iframe gives complete style isolation at the cost of a slightly more complex message-passing layer.
+
+**Background service worker for all API calls**
+Content scripts cannot directly call external APIs due to CORS restrictions. All fetch calls live in the service worker, which has no origin restriction when the hosts are declared in `manifest.json`.
+
+**Clean title first, original title as fallback**
+For live/cover/remix variants, the canonical song is far more likely to have lyrics and annotations than the variant. Searching with the cleaned title first avoids returning a live-version entry with no lyrics content.
+
+**Word overlap scoring over string distance**
+Levenshtein distance is sensitive to title length. Word overlap (matches / min set size) correctly handles the case where a short canonical title ("Yesterday") is compared against a long variant title ("Yesterday (Live at Royal Albert Hall 1965)") — the score is 1.0 because all words in the shorter set appear in the longer one.
+
+**In-memory cache, not IndexedDB**
+The service worker cache is simple to implement and sufficient for a listening session. IndexedDB would persist across sessions but adds meaningful complexity. Songs are rarely replayed within seconds, so in-memory is adequate.
+
+**On-demand AI interpretation**
+AI calls are expensive in latency and API cost. The interpretation is only fetched when the user actively opens the Interpretation tab, not pre-emptively on every song change.
+
+**Lyrics grounding for AI interpretation**
+AI models can hallucinate lyrics even for well-known songs. The actual LRCLIB lyrics are passed in a clearly delimited `=== LYRICS ===` block and the model is explicitly instructed to quote only from that block, never from training knowledge.
