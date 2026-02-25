@@ -118,20 +118,27 @@ async function fetchAIInsights(title: string, artist: string, lyricsText?: strin
   }
 
   const { cleaned: normTitle } = normalizeTitle(title);
-  const cacheKey = `ai|${normTitle}|${normalizeArtist(artist)}`;
+  const hasLyrics = !!lyricsText;
+  // Include whether lyrics were available in the cache key so a result cached
+  // without lyrics (potentially hallucinated) is not served when lyrics load.
+  const cacheKey = `ai|${normTitle}|${normalizeArtist(artist)}|${hasLyrics}`;
   if (aiCache.has(cacheKey)) {
     return { aiInsights: aiCache.get(cacheKey)! };
   }
 
-  const lyricsSection = lyricsText
-    ? `\n\nHere are the actual lyrics — use ONLY these for quotes in the Lyric Breakdown:\n${lyricsText}`
-    : "";
+  const lyricsBlock = hasLyrics
+    ? `\n\n=== LYRICS (quote ONLY from this text) ===\n${lyricsText}\n=== END LYRICS ===`
+    : "\n\n[No lyrics provided]";
 
-  const prompt = `"${normTitle}" by ${artist}.${lyricsSection}
+  const lyricBreakdownInstruction = hasLyrics
+    ? `## Lyric Breakdown — work through the song stanza by stanza (verse/chorus/bridge). For each stanza, copy the relevant lyric lines exactly from the LYRICS block above, each on its own line wrapped in *italics*, then immediately below write 1-2 sentences of plain-text interpretation. Separate stanza blocks with a blank line. You MUST copy lines verbatim from the LYRICS block — do not paraphrase or reconstruct from memory.`
+    : `## Lyric Breakdown — no lyrics were provided so do NOT write any lyric quotes. Instead describe each section's themes and imagery in plain text, one stanza block per blank-line-separated paragraph.`;
+
+  const prompt = `"${normTitle}" by ${artist}.${lyricsBlock}
 
 ## Summary — one paragraph (3-5 sentences) interpreting the song as a whole: its central theme, emotional arc, and what it means. Write in context of the full song.
 
-## Lyric Breakdown — work through the song stanza by stanza (verse/chorus/bridge). For each stanza, write each lyric line on its own line wrapped in *italics*, then immediately below (no blank line between) write 1-2 sentences of plain-text interpretation. Separate stanza blocks from each other with a blank line. Only quote from the provided lyrics — if none were provided, describe themes without quoting.
+${lyricBreakdownInstruction}
 
 Include ONLY if well-documented (omit otherwise):
 ## Inspiration & Background
@@ -152,7 +159,7 @@ Cite sources inline: [name](url). Keep paragraphs SHORT — 2-3 sentences max, s
         messages: [
           {
             role: "system",
-            content: "You are a music critic. Always respond in English. Write engaging analysis using markdown ## headers. Keep every paragraph to 2-3 sentences max — use blank lines between paragraphs liberally. Cite sources as [name](url). Omit sections with no real information. NEVER fabricate or hallucinate lyrics — only quote lyrics you know with certainty.",
+            content: "You are a music critic. Always respond in English. Write engaging analysis using markdown ## headers. Keep every paragraph to 2-3 sentences max — use blank lines between paragraphs liberally. Cite sources as [name](url). Omit sections with no real information. CRITICAL: For the Lyric Breakdown, ONLY use lines from the LYRICS block in the user message. Do NOT quote any lyrics from your training knowledge — that leads to wrong lyrics. If no LYRICS block was provided, write zero lyric quotes.",
           },
           { role: "user", content: prompt },
         ],
