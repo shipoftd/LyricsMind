@@ -12,21 +12,23 @@ const cache = new Map<string, { geniusData: unknown; lyricsData: unknown }>();
 
 // Patterns to strip from song titles (order matters — most specific first)
 const TITLE_STRIP_PATTERNS = [
-  // Parenthesized suffixes
+  // Parenthesized suffixes — keyword-first (e.g. "(Live at X)", "(Remastered 2015)")
   /\s*\((?:live|en vivo|ao vivo|dal vivo)\s*(?:at|@|in|from|on)?\s*[^)]*\)/gi,
   /\s*\((?:live|en vivo|ao vivo|dal vivo)\s*(?:version|ver\.?|recording)?\)/gi,
   /\s*\((?:acoustic|unplugged|stripped)\s*(?:version|ver\.?|session|live)?\)/gi,
-  /\s*\((?:cover|tribute|originally by)\s*[^)]*\)/gi,
+  /\s*\((?:cover|tribute|originally (?:performed )?by)\s*[^)]*\)/gi,
   /\s*\((?:remix|re-?mix|mix)\s*[^)]*\)/gi,
   /\s*\((?:demo|rough mix|alternate|alt\.?\s*(?:version|ver\.?|take)?)\)/gi,
   /\s*\((?:remaster(?:ed)?|deluxe|bonus\s*track|extended|radio\s*edit)\s*[^)]*\)/gi,
   /\s*\((?:feat\.?|ft\.?|featuring)\s*[^)]*\)/gi,
-  /\s*\((?:\d{4}\s*)?(?:version|ver\.?|edit|mix)\)/gi,
+  /\s*\((?:version|ver\.?|edit|mix)\)/gi,
+  // Parenthesized suffixes — year-first (e.g. "(2015 Remaster)", "(2015 Live Version)")
+  /\s*\(\d{4}\s*(?:remaster(?:ed)?|live|acoustic|version|ver\.?|edit|mix)[^)]*\)/gi,
   // Bracketed suffixes
   /\s*\[(?:live|acoustic|unplugged|cover|remix|demo|remaster(?:ed)?|feat\.?|ft\.?)[^\]]*\]/gi,
-  // Dash/hyphen suffixes
-  /\s*-\s*(?:live|acoustic|unplugged|cover|remix|demo|remaster(?:ed)?)\s*(?:version|ver\.?|recording)?$/gi,
-  /\s*-\s*(?:live)\s+(?:at|@|in|from|on)\s+.*$/gi,
+  // Dash/hyphen suffixes — with optional year/extra content (e.g. "- Live 2019", "- Remastered 2015")
+  /\s*-\s*(?:live|acoustic|unplugged|cover|remix|demo|remaster(?:ed)?)(?:\s+(?:at|@|in|from|on)\s+[^-]*)?(?:\s+\d{4})?$/gi,
+  /\s*-\s*\d{4}\s*(?:remaster(?:ed)?|live|acoustic|version|ver\.?|edit|mix)[^-]*$/gi,
 ];
 
 function normalizeTitle(title: string): { cleaned: string; wasModified: boolean } {
@@ -472,18 +474,31 @@ async function searchLRCLIB(title: string, artist: string) {
 
 async function fetchLRCLIB(title: string, artist: string) {
   try {
-    // Try original title first
-    let best = await searchLRCLIB(title, artist);
+    const { cleaned: cleanTitle, wasModified: titleChanged } = normalizeTitle(title);
+    const cleanArtist = normalizeArtist(artist);
+    const artistChanged = cleanArtist !== artist;
 
-    // If no result, retry with normalized title
+    let best = null;
+
+    // For variant titles (live/cover/remix), search the canonical version first —
+    // LRCLIB often has the live track but without lyrics, while the studio version has them.
+    if (titleChanged || artistChanged) {
+      console.log(`LyricsMind: Searching LRCLIB with normalized title: "${cleanTitle}" - "${cleanArtist}"`);
+      best = await searchLRCLIB(cleanTitle, cleanArtist);
+    }
+
+    // Fall back to the original title if the normalized search found nothing
     if (!best) {
-      const { cleaned: cleanTitle, wasModified: titleChanged } = normalizeTitle(title);
-      const cleanArtist = normalizeArtist(artist);
-      const artistChanged = cleanArtist !== artist;
+      best = await searchLRCLIB(title, artist);
+    }
 
-      if (titleChanged || artistChanged) {
-        console.log(`LyricsMind: Retrying LRCLIB search with normalized: "${cleanTitle}" - "${cleanArtist}"`);
-        best = await searchLRCLIB(cleanTitle, cleanArtist);
+    // If the matched result has no actual lyrics content, try the other query as a last resort
+    if (best && !best.plainLyrics && !best.syncedLyrics && (titleChanged || artistChanged)) {
+      const altTitle = titleChanged ? title : cleanTitle;
+      const altArtist = artistChanged ? artist : cleanArtist;
+      const altResult = await searchLRCLIB(altTitle, altArtist);
+      if (altResult?.plainLyrics || altResult?.syncedLyrics) {
+        best = altResult;
       }
     }
 
