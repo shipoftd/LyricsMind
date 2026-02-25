@@ -760,7 +760,7 @@ function CollapsibleAISection({ title, content }: { title: string; content: stri
       </h2>
       <div
         ref={contentRef}
-        className={`transition-all duration-500 ${!expanded && isTruncated ? "ai-section-collapsed" : "max-h-[1000px]"}`}
+        className={`overflow-hidden transition-all duration-500 ${!expanded && isTruncated ? "ai-section-collapsed" : "max-h-[9999px]"}`}
       >
         {isLyricBreakdown ? <LyricBreakdownContent text={content} /> : <SimpleMarkdown text={content} />}
       </div>
