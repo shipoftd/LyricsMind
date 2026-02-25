@@ -1,99 +1,147 @@
 # LyricsMind
 
-A Chrome extension that enriches your music listening experience with **Genius annotations, song context, and cultural interpretations** — displayed in a sleek sidebar while you listen on YouTube Music or Spotify.
+A Chrome extension that enriches your music listening experience with **Genius annotations, synced lyrics, and AI-powered interpretations** — displayed in a sleek sidebar while you listen on YouTube Music or Spotify.
 
-Unlike simple lyrics extensions, LyricsMind focuses on the *meaning behind the music*: artist commentary, lyric interpretations, production credits, and background context sourced from Genius. Lyrics are only shown when the platform isn't already displaying them.
+---
 
-## Features
+## What It Does
 
-- **Automatic song detection** — Detects the currently playing song on YouTube Music and Spotify via DOM observation with MutationObserver
-- **Genius annotations** — Fetches lyric-specific annotations and interpretations from the Genius API
-- **Song context** — Displays song description, producers, writers, release date, album info, and Genius page views
-- **Conditional lyrics** — Fetches time-synced lyrics from LRCLIB only when the platform isn't already showing them
-- **Time-synced highlighting** — Active lyric line highlighted in real-time based on playback position
-- **Dark-themed sidebar** — Non-intrusive UI that matches the aesthetic of music streaming platforms
-- **Keyboard toggle** — Cmd+Shift+L (Mac) / Ctrl+Shift+L (Windows/Linux) to show/hide the sidebar
+While a song plays, LyricsMind opens a sidebar with three tabs:
 
-## Architecture
+| Tab | What you get |
+|---|---|
+| **Context** | Genius annotations, song description, producers, writers, release date |
+| **Lyrics** | Time-synced lyrics that highlight the current line as the song plays |
+| **Interpretation** | AI-generated stanza-by-stanza breakdown grounded in the actual lyrics |
 
-```
-Content Scripts (youtube-music.ts, spotify.ts)
-  ├── MutationObserver detects song changes
-  ├── Polls playback position every 1s
-  ├── Injects sidebar iframe into page
-  └── Relays data to sidebar via postMessage
-          │
-          ▼
-Background Service Worker (background/index.ts)
-  ├── Genius API: search → song details → annotations
-  ├── LRCLIB API: time-synced + plain lyrics (conditional)
-  ├── In-memory cache (title|artist keyed)
-  └── Returns aggregated data to content script
-          │
-          ▼
-Sidebar App (sidebar/App.tsx)
-  ├── Song header with album art
-  ├── Metadata badges (producers, writers, views)
-  ├── Expandable "About" section
-  ├── Annotation cards with lyric referents
-  └── Conditional lyrics tab with time-sync
-```
+Live versions, acoustic versions, remixes, and cover songs are automatically detected and matched to their canonical lyrics.
 
-## Setup
+---
 
-### Prerequisites
+## Installation
 
-- Node.js 18+
-- A free [Genius API token](https://genius.com/api-clients)
+### Option A — Load the pre-built extension (no coding required)
 
-### Build
+1. **Download** the latest `dist.zip` from the [Releases](../../releases) page (or ask whoever shared this with you for the zip file).
+2. **Unzip** it anywhere on your computer. You will get a folder called `dist/`.
+3. Open Chrome and go to **`chrome://extensions`**.
+4. Turn on **Developer mode** using the toggle in the top-right corner.
+5. Click **Load unpacked**.
+6. Select the `dist/` folder you just unzipped.
+7. The LyricsMind icon will appear in your Chrome toolbar.
+
+> **Note:** Chrome may warn you that the extension was not installed from the Web Store. This is expected for manually loaded extensions — click **Keep** if prompted.
+
+---
+
+### Option B — Build from source
+
+**You will need:**
+- [Node.js](https://nodejs.org) version 18 or newer (check with `node -v`)
+- [Git](https://git-scm.com)
+
+**Steps:**
 
 ```bash
+# 1. Clone the repository
+git clone https://github.com/shipoftd/LyricsMind.git
+cd LyricsMind
+
+# 2. Install dependencies
 npm install
+
+# 3. Build the extension
 npm run build
 ```
 
-This produces a loadable extension in the `dist/` directory.
+This produces a `dist/` folder in the project directory.
 
-### Load in Chrome
+4. Open Chrome and go to **`chrome://extensions`**.
+5. Turn on **Developer mode** (top-right toggle).
+6. Click **Load unpacked** and select the `dist/` folder.
 
-1. Go to `chrome://extensions`
-2. Enable **Developer mode** (top right)
-3. Click **Load unpacked**
-4. Select the `dist/` folder
-
-### Configure Genius API Token
-
-1. Click the LyricsMind extension icon in the Chrome toolbar
-2. Paste your Genius API **Client Access Token** into the input field
-3. Click **Save Token**
-
-To get a token: visit [genius.com/api-clients](https://genius.com/api-clients), create a new API client (any URL is fine for the app website field), and copy the **Client Access Token**.
-
-### Development
-
+**To rebuild after making code changes:**
 ```bash
-npm run dev
+npm run dev   # watches for changes and rebuilds automatically
 ```
+After each rebuild, go to `chrome://extensions` and click the **↺ reload** button on the LyricsMind card.
 
-Runs `vite build --watch` so the extension rebuilds on file changes. After each rebuild, go to `chrome://extensions` and click the reload button on the LyricsMind card.
+---
 
-## Usage
+## Setup: API Keys
 
-- The sidebar appears automatically on **music.youtube.com** and **open.spotify.com**
-- Press **Cmd+Shift+L** (Mac) or **Ctrl+Shift+L** (Windows/Linux) to toggle the sidebar
-- Click the extension icon to open settings (token configuration, enable/disable)
-- Click annotation cards to expand/collapse full interpretation text
-- Click the **Genius** link in the header to open the full Genius page for the song
+The extension needs two API keys to unlock all features. Both are **free**.
+
+### 1. Genius API Token *(required for the Context tab)*
+
+1. Go to [genius.com/api-clients](https://genius.com/api-clients) and sign in (or create a free account).
+2. Click **New API Client**.
+3. Fill in any name and any URL for "App Website URL" (e.g. `http://localhost`). Click **Save**.
+4. Copy the **Client Access Token** shown on the next screen.
+
+### 2. Gemini API Key *(required for the Interpretation tab)*
+
+1. Go to [aistudio.google.com/apikey](https://aistudio.google.com/apikey) and sign in with a Google account.
+2. Click **Create API key**.
+3. Copy the key (it starts with `AIza...`).
+
+> **Using a different AI provider?** The Interpretation tab also works with OpenAI or any OpenAI-compatible API. See [Advanced Configuration](#advanced-configuration) below.
+
+### Entering your keys
+
+1. Click the **LyricsMind icon** in the Chrome toolbar to open Settings.
+2. Paste your **Genius API Token** into the first field.
+3. Paste your **Gemini API Key** into the second field.
+4. Click **Save Settings**.
+
+You only need to do this once — keys are stored locally in Chrome.
+
+---
+
+## Using the Extension
+
+- Navigate to **[music.youtube.com](https://music.youtube.com)** or **[open.spotify.com](https://open.spotify.com)** and play a song.
+- The sidebar appears automatically on the right side of the page.
+- Press **Cmd+Shift+L** (Mac) or **Ctrl+Shift+L** (Windows/Linux) to show or hide it at any time.
+
+### The three tabs
+
+**Context**
+Shows Genius annotations — tappable cards tied to specific lyric lines that explain references, metaphors, and background. Also shows producers, writers, release date, and a link to the full Genius page.
+
+**Lyrics**
+Displays time-synced lyrics fetched from [LRCLIB](https://lrclib.net). The current line is highlighted as the song plays and the view auto-scrolls. If LRCLIB doesn't have the song, the AI generates the lyrics as a fallback.
+
+**Interpretation**
+Generates an AI-powered breakdown of the song. The top section gives a whole-song interpretation (theme, emotional arc, meaning). Below that, the lyrics are broken down stanza by stanza — each section shows the lyric lines in *italics* followed by a plain-text explanation. The AI uses only the actual fetched lyrics, never fabricated ones.
+
+---
+
+## Advanced Configuration
+
+By default the Interpretation tab uses **Google Gemini 2.0 Flash**. You can change this in Settings:
+
+| Field | Default | Notes |
+|---|---|---|
+| **Base URL** | `https://generativelanguage.googleapis.com/v1beta/openai` | Any OpenAI-compatible endpoint works |
+| **Model** | `gemini-2.0-flash` | e.g. `gpt-4o`, `claude-3-5-haiku`, etc. |
+
+To use **OpenAI**:
+- Base URL: `https://api.openai.com/v1`
+- Model: `gpt-4o` (or any model you have access to)
+- API Key: your OpenAI key
+
+To use **Anthropic Claude** via a compatible proxy, set the Base URL and model accordingly.
+
+---
 
 ## Tech Stack
 
-- **Extension format:** Chrome Manifest V3
-- **UI:** React 19 + Tailwind CSS
-- **Build:** Vite with multi-entry Rollup config
-- **Language:** TypeScript
-- **APIs:** [Genius API](https://docs.genius.com) (annotations/context), [LRCLIB](https://lrclib.net) (lyrics)
-- **Style isolation:** iframe-based sidebar prevents CSS conflicts with host pages
+- **Chrome Manifest V3** — service worker, content scripts, popup
+- **React 19 + Tailwind CSS** — sidebar and popup UI
+- **TypeScript + Vite** — type-safe build with multi-entry Rollup config
+- **iframe-based sidebar** — prevents CSS conflicts with the host page
+- **APIs:** [Genius](https://docs.genius.com) · [LRCLIB](https://lrclib.net) · Google Gemini (or OpenAI-compatible)
 
 ## Project Structure
 
@@ -104,13 +152,11 @@ src/
 │   ├── youtube-music.ts     # YouTube Music song detection + sidebar injection
 │   └── spotify.ts           # Spotify Web Player song detection + sidebar injection
 ├── sidebar/
-│   ├── App.tsx              # Main sidebar React app (annotations, context, lyrics)
+│   ├── App.tsx              # Main sidebar React app (annotations, lyrics, interpretation)
 │   └── main.tsx             # React entry point
 ├── popup/
-│   ├── App.tsx              # Extension popup (settings, token input)
+│   ├── App.tsx              # Extension popup (settings, token/key input)
 │   └── main.tsx             # React entry point
-├── utils/
-│   └── messages.ts          # Shared TypeScript interfaces and message types
-└── styles/
-    └── index.css            # Tailwind CSS imports
+└── utils/
+    └── messages.ts          # Shared TypeScript interfaces and message types
 ```
