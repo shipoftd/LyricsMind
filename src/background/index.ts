@@ -129,16 +129,16 @@ async function fetchAIInsights(title: string, artist: string, lyricsText?: strin
 
   const prompt = `"${normTitle}" by ${artist}.${lyricsSection}
 
-## Summary — one short paragraph on the song's core message.
+## Summary — one paragraph (3-5 sentences) interpreting the song as a whole: its central theme, emotional arc, and what it means. Write in context of the full song.
 
-## Lyric Breakdown — go through the song stanza by stanza (or verse/chorus). For each section, quote the key lyric in *italics* exactly as provided above, then explain its meaning in 1-2 sentences. Separate each stanza analysis with a blank line. Only quote lyrics from the provided text. If no lyrics were provided, describe themes without quoting.
+## Lyric Breakdown — work through the song stanza by stanza (verse/chorus/bridge). For each stanza, write each lyric line on its own line wrapped in *italics*, then immediately below (no blank line between) write 1-2 sentences of plain-text interpretation. Separate stanza blocks from each other with a blank line. Only quote from the provided lyrics — if none were provided, describe themes without quoting.
 
 Include ONLY if well-documented (omit otherwise):
 ## Inspiration & Background
 ## Cultural Impact
 ## Trivia
 
-Cite sources inline: [name](url). Keep paragraphs SHORT — 2-3 sentences max each, separated by blank lines. No bullets.`;
+Cite sources inline: [name](url). Keep paragraphs SHORT — 2-3 sentences max, separated by blank lines. No bullets.`;
 
   try {
     const resp = await fetch(`${config.baseUrl}/chat/completions`, {

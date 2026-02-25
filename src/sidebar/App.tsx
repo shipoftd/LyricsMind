@@ -692,6 +692,53 @@ function AnnotationCard({
 
 // ---- AI Insights View ----
 
+// Specialized renderer for the Lyric Breakdown section.
+// Each stanza block has italic lyric lines first, then plain interpretation below.
+function LyricBreakdownContent({ text }: { text: string }) {
+  // Stanza blocks are separated by blank lines
+  const blocks = text.split(/\n[ \t]*\n/).map(b => b.trim()).filter(Boolean);
+
+  return (
+    <div className="space-y-4">
+      {blocks.map((block, i) => {
+        const lines = block.split('\n').map(l => l.trim()).filter(Boolean);
+
+        // Leading lines wrapped in *...* are the lyric quote; the rest is interpretation
+        const lyricLines: string[] = [];
+        const interpLines: string[] = [];
+        for (const line of lines) {
+          // Match a line that starts and ends with a single * (italic marker, not **)
+          const italicMatch = /^\*([^*].*)\*$|^\*([^*])\*$/.exec(line);
+          if (italicMatch && interpLines.length === 0) {
+            lyricLines.push(italicMatch[1] ?? italicMatch[2]);
+          } else {
+            interpLines.push(line);
+          }
+        }
+
+        const interpText = interpLines.join(' ');
+
+        return (
+          <div key={i}>
+            {lyricLines.length > 0 && (
+              <div className="text-xs text-white/85 italic leading-relaxed mb-1.5">
+                {lyricLines.map((line, j) => (
+                  <div key={j}>{line}</div>
+                ))}
+              </div>
+            )}
+            {interpText && (
+              <p className="text-xs text-white/65 leading-relaxed">
+                {formatInline(interpText)}
+              </p>
+            )}
+          </div>
+        );
+      })}
+    </div>
+  );
+}
+
 function CollapsibleAISection({ title, content }: { title: string; content: string }) {
   const [expanded, setExpanded] = useState(false);
   const contentRef = useRef<HTMLDivElement>(null);
@@ -704,6 +751,8 @@ function CollapsibleAISection({ title, content }: { title: string; content: stri
     }
   }, [content]);
 
+  const isLyricBreakdown = title === "Lyric Breakdown";
+
   return (
     <section className="bg-white/[0.03] border border-white/[0.06] rounded-lg p-3">
       <h2 className="text-sm font-bold text-purple-400 mb-1.5 uppercase tracking-wider">
@@ -713,7 +762,7 @@ function CollapsibleAISection({ title, content }: { title: string; content: stri
         ref={contentRef}
         className={`transition-all duration-500 ${!expanded && isTruncated ? "ai-section-collapsed" : "max-h-[1000px]"}`}
       >
-        <SimpleMarkdown text={content} />
+        {isLyricBreakdown ? <LyricBreakdownContent text={content} /> : <SimpleMarkdown text={content} />}
       </div>
       {isTruncated && (
         <button
