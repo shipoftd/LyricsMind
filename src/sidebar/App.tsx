@@ -119,6 +119,8 @@ export default function App() {
   const [aiError, setAiError] = useState<string | null>(null);
   const [aiFetched, setAiFetched] = useState(false);
   const fallbackRequested = useRef(false);
+  // Tracks whether the last AI insights fetch had no lyrics — used to auto-retry when lyrics arrive
+  const aiFetchedWithoutLyrics = useRef(false);
 
   useEffect(() => {
     const handler = (event: MessageEvent) => {
@@ -139,6 +141,7 @@ export default function App() {
           setAiError(null);
           setAiFetched(false);
           fallbackRequested.current = false;
+          aiFetchedWithoutLyrics.current = false;
           break;
         case "GENIUS_DATA":
           setGenius(msg.payload);
@@ -215,20 +218,40 @@ export default function App() {
   const handleAiTab = () => {
     setActiveTab("ai");
     if (!aiFetched && !aiLoading && song) {
-      // Send request to content script (parent) which relays to background
-      // Pass lyrics so the AI can reference actual text instead of hallucinating
       let lyricsText: string | null = null;
       if (lyrics?.syncedLyrics) {
         lyricsText = lyrics.syncedLyrics.map(l => l.text).join("\n");
       } else if (lyrics?.plainLyrics) {
         lyricsText = lyrics.plainLyrics;
       }
+      aiFetchedWithoutLyrics.current = !lyricsText;
       window.parent.postMessage({
         type: "REQUEST_AI_INSIGHTS",
         payload: { title: song.title, artist: song.artist, lyricsText },
       }, "*");
     }
   };
+
+  // If lyrics arrive (via AI fallback) after interpretation was already fetched without them,
+  // and the user is still on the AI tab, silently re-fetch with the real lyrics.
+  useEffect(() => {
+    const hasLyrics = !!(lyrics?.plainLyrics || lyrics?.syncedLyrics);
+    if (!hasLyrics || !aiFetchedWithoutLyrics.current || !song || aiLoading || activeTab !== "ai") return;
+
+    aiFetchedWithoutLyrics.current = false;
+    setAiInsights(null);
+    setAiError(null);
+    setAiFetched(false);
+
+    const lyricsText = lyrics?.syncedLyrics
+      ? lyrics.syncedLyrics.map(l => l.text).join("\n")
+      : lyrics?.plainLyrics ?? null;
+
+    window.parent.postMessage({
+      type: "REQUEST_AI_INSIGHTS",
+      payload: { title: song.title, artist: song.artist, lyricsText },
+    }, "*");
+  }, [lyrics, activeTab, song, aiLoading]);
 
   const toggleAnnotation = (id: number) => {
     setExpandedAnnotations((prev) => {
